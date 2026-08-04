@@ -22,7 +22,23 @@ jobs:
       - run: bun test
       - run: bun run build
 
-      # The published entrypoint must import and run under plain Node, not just
-      # Bun — the package targets Node >= 18 and lists no Bun dependency.
-      - name: Verify the built package loads under Node
-        run: node -e "import('./dist/index.js').then(m => { if (typeof m.createAgentManager !== 'function') { throw new Error('missing createAgentManager export'); } console.log('dist/index.js loads under Node ' + process.version); })"
+      # The published entrypoint must link and run under plain Node across every
+      # supported major, not just under Bun: the package targets Node >= 18 and
+      # has no Bun dependency. Node validates ESM exports at link time, so a
+      # broken export list fails here rather than in a consumer's install.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify the built package loads under Node 20
+        run: node --input-type=module -e "$(cat scripts/verify-dist.mjs)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify the built package loads under Node 24
+        run: node --input-type=module -e "$(cat scripts/verify-dist.mjs)"
+
+      # A real consumer resolves types through package.json "exports". This
+      # catches a d.ts that only compiles inside this repo's tsconfig.
+      - name: Verify the published types resolve for a consumer
+        run: bun run verify:types

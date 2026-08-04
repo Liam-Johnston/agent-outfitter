@@ -1,4 +1,12 @@
 {
+  // Emits the published artifact: plain per-file ESM plus declarations.
+  //
+  // Deliberately not bundled. A bundler buys nothing for a library that ships
+  // no browser assets, and it costs real risk: Bun's bundler rewrites class
+  // declarations into lazily-initialized `var`s whose exports a strict ESM
+  // loader can reject, and the exact output varies by bundler version. `tsc`
+  // emits the module graph TypeScript already describes, so the .js and the
+  // .d.ts always agree.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
@@ -7,7 +15,8 @@
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,
-    "emitDeclarationOnly": true
+    "sourceMap": true,
+    "removeComments": false
   },
   "include": ["src/**/*.ts"]
 }

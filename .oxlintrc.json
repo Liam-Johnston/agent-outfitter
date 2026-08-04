@@ -35,6 +35,13 @@
       "rules": {
         "typescript/no-explicit-any": "off"
       }
+    },
+    {
+      // Release-verification scripts exist to report their findings to a CI log.
+      "files": ["scripts/**/*.mjs", "scripts/**/*.js"],
+      "rules": {
+        "no-console": "off"
+      }
     }
   ]
 }

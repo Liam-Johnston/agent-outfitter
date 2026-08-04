@@ -10,7 +10,8 @@ permissions:
   id-token: write # REQUIRED for npm OIDC trusted publishing + provenance
 
 # The npm trusted-publisher config is pinned to this workflow's *filename*.
-# Renaming this file breaks publishing with a 404 until npm is updated to match.
+# Renaming this file breaks publishing with a 404 that reads like a permissions
+# error, until the npm setting is updated to match.
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -19,23 +20,37 @@ jobs:
 
       # Bun builds and tests; the publish itself goes through the npm CLI,
       # because OIDC trusted publishing and provenance attestation are npm-CLI
-      # features (>= 11.5.1) that no other client implements.
+      # features that no other client implements.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      # Node 22+, not 20: current npm majors require it, and npm >= 11.5.1 is
+      # the floor for trusted publishing.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest && npm --version
+        run: |
+          npm install -g npm@latest
+          version="$(npm --version)"
+          echo "npm $version"
+          # 11.5.1 is the floor for OIDC trusted publishing. Fail loudly here
+          # rather than at `npm publish`, where the error is opaque.
+          if [ "$(printf '%s\n11.5.1\n' "$version" | sort -V | head -1)" != "11.5.1" ]; then
+            echo "npm >= 11.5.1 required for OIDC trusted publishing, got $version" >&2
+            exit 1
+          fi
 
       - run: bun install --frozen-lockfile
+      - run: bun run lint
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+      - run: bun run verify:dist
+      - run: bun run verify:types
 
       - uses: changesets/action@v1
         with:
