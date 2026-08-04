@@ -26,7 +26,7 @@ describe("parseSkillMd", () => {
     const parsed = parseSkillMd("# Just markdown\n", "SKILL.md");
     expect(parsed.name).toBeUndefined();
     expect(parsed.description).toBe("");
-    expect(parsed.dependencies).toEqual({ skills: [], mcp: [], unsupported: [] });
+    expect(parsed.dependencies).toEqual({ skills: [], mcp: [], instructions: [], unsupported: [] });
   });
 
   test("parses structured skill and mcp dependencies", () => {

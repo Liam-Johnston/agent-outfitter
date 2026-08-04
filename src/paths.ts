@@ -4,19 +4,19 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
 export const defaultCacheDir = (): string => {
-  const override = process.env.SKILLSMITH_CACHE_DIR;
+  const override = process.env.AGENT_OUTFITTER_CACHE_DIR;
   if (override) return override;
 
   switch (platform()) {
     case "darwin":
-      return join(homedir(), "Library", "Caches", "skillsmith");
+      return join(homedir(), "Library", "Caches", "agent-outfitter");
     case "win32":
       return join(
         process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
-        "skillsmith",
+        "agent-outfitter",
         "Cache",
       );
     default:
-      return join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "skillsmith");
+      return join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "agent-outfitter");
   }
 };

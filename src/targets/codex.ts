@@ -16,16 +16,21 @@ import { mergeCodexToml, readIfExists, writeConfigIfChanged } from "./mcp-config
 import {
   installedHash,
   materializeToDir,
+  removeInstructionsFromFile,
   resolveAgainstRoot,
   unmaterializeFromDir,
+  writeInstructionFile,
 } from "./base.js";
 import { TargetError } from "../errors.js";
 import type {
+  AgentTarget,
+  InstructionWriteInput,
+  InstructionWriteOutput,
   MaterializeInput,
   MaterializeOutput,
   McpWriteInput,
   McpWriteOutput,
-  SkillTarget,
+  PrimitiveKind,
   TargetContext,
 } from "../types.js";
 
@@ -45,11 +50,16 @@ export interface CodexTargetOptions {
    * `@openai/codex-sdk`'s `config` option. Default `"file"`.
    */
   mcpMode?: "file" | "sdk-config";
+  /**
+   * Instruction file Codex reads. Default `AGENTS.md`, in `$CODEX_HOME` for user
+   * scope or the project directory for project scope.
+   */
+  instructionFile?: string;
   /** Override the adapter name (useful when installing to two Codex homes). */
   name?: string;
 }
 
-export interface CodexTarget extends SkillTarget {
+export interface CodexTarget extends AgentTarget {
   /**
    * MCP entries in Codex's own config shape, populated after `install()`.
    * Pass as `new Codex({ config: target.mcpConfigOverrides })` when using
@@ -58,6 +68,8 @@ export interface CodexTarget extends SkillTarget {
   readonly mcpConfigOverrides: { mcp_servers: Record<string, unknown> };
   /** Absolute path to the `config.toml` this target manages. */
   configPath(ctx: TargetContext): string;
+  /** Absolute path to the `AGENTS.md` this target merges instructions into. */
+  instructionPath(ctx: TargetContext): string;
 }
 
 const defaultCodexHome = (): string => process.env.CODEX_HOME ?? join(homedir(), ".codex");
@@ -80,15 +92,34 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
     return join(homeDir(ctx), "skills");
   };
 
+  /**
+   * Instructions belong wherever the agent actually runs: alongside the project
+   * for project scope, and in `$CODEX_HOME` for user scope so they apply to
+   * every session that home serves.
+   */
+  const instructionPath = (ctx: TargetContext): string => {
+    const file = options.instructionFile ?? "AGENTS.md";
+    if (scope === "project") {
+      const projectDir = options.projectDir ? resolveAgainstRoot(ctx, options.projectDir) : ctx.root;
+      return join(projectDir, file);
+    }
+    return join(homeDir(ctx), file);
+  };
+
   return {
     name: options.name ?? "codex",
+    supports: ["skill", "mcp", "instruction"],
     mcpConfigOverrides: overrides,
 
     configPath(ctx: TargetContext): string {
       return join(homeDir(ctx), "config.toml");
     },
 
-    resolveSkillsDir(ctx: TargetContext): string {
+    instructionPath,
+
+    resolveDir(kind: PrimitiveKind, ctx: TargetContext): string {
+      if (kind === "mcp") return join(homeDir(ctx), "config.toml");
+      if (kind === "instruction") return instructionPath(ctx);
       return skillsDir(ctx);
     },
 
@@ -141,6 +172,14 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
         input.servers.map((s) => [s.name, toCodexMcpEntry(s.server)]),
       );
       return { path, written: merged.written };
+    },
+
+    async writeInstructions(input: InstructionWriteInput): Promise<InstructionWriteOutput> {
+      return writeInstructionFile(instructionPath(input.ctx), input);
+    },
+
+    async removeInstructions(names: string[], ctx: TargetContext): Promise<void> {
+      await removeInstructionsFromFile(instructionPath(ctx), names);
     },
 
     async removeMcpServers(names: string[], ctx: TargetContext): Promise<void> {

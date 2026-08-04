@@ -1,6 +1,6 @@
-/** Typed errors. Every failure skillsmith raises deliberately extends `SkillsmithError`. */
+/** Typed errors. Every failure agent-outfitter raises deliberately extends `OutfitterError`. */
 
-export type SkillsmithErrorCode =
+export type OutfitterErrorCode =
   | "SOURCE_RESOLUTION"
   | "SKILL_NOT_FOUND"
   | "HASH_MISMATCH"
@@ -12,11 +12,11 @@ export type SkillsmithErrorCode =
   | "LOCKFILE"
   | "NOT_IMPLEMENTED";
 
-export class SkillsmithError extends Error {
-  readonly code: SkillsmithErrorCode;
+export class OutfitterError extends Error {
+  readonly code: OutfitterErrorCode;
   readonly detail: Record<string, unknown>;
 
-  constructor(code: SkillsmithErrorCode, message: string, detail: Record<string, unknown> = {}) {
+  constructor(code: OutfitterErrorCode, message: string, detail: Record<string, unknown> = {}) {
     super(message);
     this.name = new.target.name;
     this.code = code;
@@ -24,19 +24,19 @@ export class SkillsmithError extends Error {
   }
 }
 
-export class SourceResolutionError extends SkillsmithError {
+export class SourceResolutionError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("SOURCE_RESOLUTION", message, detail);
   }
 }
 
-export class SkillNotFoundError extends SkillsmithError {
+export class SkillNotFoundError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("SKILL_NOT_FOUND", message, detail);
   }
 }
 
-export class HashMismatchError extends SkillsmithError {
+export class HashMismatchError extends OutfitterError {
   readonly expected: string;
   readonly actual: string;
 
@@ -52,13 +52,13 @@ export class HashMismatchError extends SkillsmithError {
   }
 }
 
-export class PolicyViolationError extends SkillsmithError {
+export class PolicyViolationError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("POLICY_VIOLATION", message, detail);
   }
 }
 
-export class CycleError extends SkillsmithError {
+export class CycleError extends OutfitterError {
   readonly cycle: string[];
 
   constructor(cycle: string[]) {
@@ -67,31 +67,31 @@ export class CycleError extends SkillsmithError {
   }
 }
 
-export class TargetError extends SkillsmithError {
+export class TargetError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("TARGET", message, detail);
   }
 }
 
-export class AuthError extends SkillsmithError {
+export class AuthError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("AUTH", message, detail);
   }
 }
 
-export class ManifestError extends SkillsmithError {
+export class ManifestError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("MANIFEST", message, detail);
   }
 }
 
-export class LockfileError extends SkillsmithError {
+export class LockfileError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("LOCKFILE", message, detail);
   }
 }
 
-export class NotImplementedError extends SkillsmithError {
+export class NotImplementedError extends OutfitterError {
   constructor(message: string, detail?: Record<string, unknown>) {
     super("NOT_IMPLEMENTED", message, detail);
   }

@@ -1,8 +1,8 @@
 /**
  * Manifest loading and validation.
  *
- * Three interchangeable forms: `skills.config.ts` (typed, computable),
- * `skills.config.yaml`, or `skills.config.json`. All three parse into the same
+ * Three interchangeable forms: `outfitter.config.ts` (typed, computable),
+ * `outfitter.config.yaml`, or `outfitter.config.json`. All three parse into the same
  * `Manifest`; only the serializable forms can be written back by `add`/`remove`.
  */
 
@@ -14,17 +14,17 @@ import { z } from "zod";
 
 import { ManifestError } from "./errors.js";
 import { pathExists, readTextFile, writeFileAtomic } from "./fsutil.js";
-import type { Manifest, ManifestSourceEntry, NamedMcpServer, SkillTarget } from "./types.js";
+import type { Manifest, ManifestSourceEntry, NamedMcpServer, AgentTarget } from "./types.js";
 
 /** Filenames probed, in order, when no manifest path is configured. */
 export const MANIFEST_CANDIDATES = [
-  "skills.config.ts",
-  "skills.config.mts",
-  "skills.config.js",
-  "skills.config.mjs",
-  "skills.config.yaml",
-  "skills.config.yml",
-  "skills.config.json",
+  "outfitter.config.ts",
+  "outfitter.config.mts",
+  "outfitter.config.js",
+  "outfitter.config.mjs",
+  "outfitter.config.yaml",
+  "outfitter.config.yml",
+  "outfitter.config.json",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -89,6 +89,17 @@ const manifestSourceSchema = z.union([
     .strict(),
 ]);
 
+export const instructionRefSchema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      ref: z.string().min(1),
+      name: z.string().min(1).optional(),
+      select: z.union([z.string(), z.array(z.string())]).optional(),
+    })
+    .strict(),
+]);
+
 const policySchema = z
   .object({
     allowedHosts: z.array(z.string()).optional(),
@@ -97,6 +108,7 @@ const policySchema = z
     scripts: z.enum(["allow", "warn", "deny"]).optional(),
     scan: z.enum(["off", "warn", "deny"]).optional(),
     allowTransitiveMcp: z.boolean().optional(),
+    allowTransitiveInstructions: z.boolean().optional(),
     allowedMcpHosts: z.array(z.string()).optional(),
     allowedMcpCommands: z.array(z.string()).optional(),
     allowLocalSources: z.boolean().optional(),
@@ -110,13 +122,13 @@ const policySchema = z
  */
 const targetSchema = z.union([
   z.string().min(1),
-  z.custom<SkillTarget>(
+  z.custom<AgentTarget>(
     (value) =>
       typeof value === "object" &&
       value !== null &&
-      typeof (value as SkillTarget).name === "string" &&
-      typeof (value as SkillTarget).materialize === "function",
-    { message: "Target must be a built-in target name or a SkillTarget adapter." },
+      typeof (value as AgentTarget).name === "string" &&
+      typeof (value as AgentTarget).materialize === "function",
+    { message: "Target must be a built-in target name or a AgentTarget adapter." },
   ),
 ]);
 
@@ -126,6 +138,7 @@ export const manifestSchema = z
     targets: z.array(targetSchema).optional(),
     sources: z.array(manifestSourceSchema).optional(),
     mcp: z.array(namedMcpServerSchema).optional(),
+    instructions: z.array(instructionRefSchema).optional(),
     policy: policySchema.optional(),
   })
   .strict();
@@ -142,7 +155,12 @@ export interface LoadedManifest {
   writable: boolean;
 }
 
-export const emptyManifest = (): Manifest => ({ version: 1, sources: [], mcp: [] });
+export const emptyManifest = (): Manifest => ({
+  version: 1,
+  sources: [],
+  mcp: [],
+  instructions: [],
+});
 
 export const validateManifest = (value: unknown, origin: string): Manifest => {
   const parsed = manifestSchema.safeParse(value);
@@ -226,7 +244,7 @@ const importConfigModule = async (path: string): Promise<unknown> => {
     if (ext === ".ts" || ext === ".mts") {
       throw new ManifestError(
         `Could not import ${path}. TypeScript manifests need a runtime that strips types ` +
-          `(Bun, tsx, or Node >= 22.18). Use skills.config.yaml or skills.config.json otherwise. ` +
+          `(Bun, tsx, or Node >= 22.18). Use outfitter.config.yaml or outfitter.config.json otherwise. ` +
           `Cause: ${(error as Error).message}`,
         { path, cause: (error as Error).message },
       );
@@ -249,6 +267,9 @@ const serializableManifest = (manifest: Manifest): Record<string, unknown> => {
   if (targets.length > 0) out.targets = targets;
   if (manifest.sources && manifest.sources.length > 0) out.sources = manifest.sources;
   if (manifest.mcp && manifest.mcp.length > 0) out.mcp = manifest.mcp;
+  if (manifest.instructions && manifest.instructions.length > 0) {
+    out.instructions = manifest.instructions;
+  }
   if (manifest.policy && Object.keys(manifest.policy).length > 0) out.policy = manifest.policy;
   return out;
 };
@@ -271,7 +292,7 @@ export const writeManifest = async (path: string, manifest: Manifest): Promise<v
   );
 };
 
-/** Identity helper that gives `skills.config.ts` authors full type inference. */
+/** Identity helper that gives `outfitter.config.ts` authors full type inference. */
 export const defineConfig = (config: Manifest): Manifest => config;
 
 export const isSourceEntry = (

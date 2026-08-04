@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 
 const roots: string[] = [];
 
-export const makeTempDir = async (prefix = "skillsmith-test-"): Promise<string> => {
+export const makeTempDir = async (prefix = "agent-outfitter-test-"): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   roots.push(dir);
   return dir;

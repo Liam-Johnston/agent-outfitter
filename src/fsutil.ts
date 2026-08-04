@@ -97,7 +97,7 @@ export const ensureDir = async (p: string): Promise<void> => {
   await mkdir(p, { recursive: true });
 };
 
-const tempSuffix = (): string => `.skillsmith-${randomBytes(6).toString("hex")}.tmp`;
+const tempSuffix = (): string => `.agent-outfitter-${randomBytes(6).toString("hex")}.tmp`;
 
 /** Write a file by writing a sibling temp file and renaming over the target. */
 export const writeFileAtomic = async (target: string, data: string | Uint8Array): Promise<void> => {
@@ -144,6 +144,10 @@ export const replaceDirAtomic = async (sourceDir: string, target: string): Promi
 
 export const removeDir = async (p: string): Promise<void> => {
   await rm(p, { recursive: true, force: true });
+};
+
+export const removeFile = async (p: string): Promise<void> => {
+  await rm(p, { force: true });
 };
 
 const startsWithShebang = async (p: string): Promise<boolean> => {

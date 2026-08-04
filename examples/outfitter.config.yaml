@@ -1,10 +1,11 @@
-# Example manifest, in the YAML form. Equivalent to examples/skills.config.ts,
+# Example manifest, in the YAML form. Equivalent to examples/outfitter.config.ts,
 # minus the ability to compute values. This form is machine-editable, so
 # `add()` and `remove()` can write it back.
 version: 1
 
 targets: [codex, claude]
 
+# Skills: folders the harness discovers on its own.
 sources:
   - ref: github:anthropics/skills#main
     select: [pdf, xlsx, docx]
@@ -13,6 +14,7 @@ sources:
     auth: { env: SKILLS_TOKEN }
   - local:./skills
 
+# MCP servers: configured into each target, never copied as files.
 mcp:
   - name: github
     transport: http
@@ -23,6 +25,15 @@ mcp:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
 
+# Instruction fragments: merged into AGENTS.md / CLAUDE.md inside marked
+# regions, leaving your own prose in those files untouched.
+instructions:
+  - ref: github:acme/agent-config/instructions
+    select: [house-style, review-*]
+  - ref: github:acme/agent-config/instructions/tone.md
+    name: voice
+  - local:./instructions
+
 policy:
   allowedHosts: [github.com]
   allowedOwners: [acme, anthropics]
@@ -30,4 +41,5 @@ policy:
   scripts: warn
   scan: warn
   allowTransitiveMcp: false
+  allowTransitiveInstructions: false
   allowedMcpHosts: [api.githubcopilot.com]

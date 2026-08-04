@@ -1,14 +1,14 @@
 /**
- * skillsmith — a library-first agent-skill package manager.
+ * agent-outfitter — a library-first agent-skill package manager.
  *
  * Import a function, hand it a manifest (or refs) and one or more targets,
  * `await` the result. Nothing runs on import and nothing is written until you
  * call an install method.
  *
  * ```ts
- * import { createSkillManager, codexTarget } from "skillsmith";
+ * import { createAgentManager, codexTarget } from "agent-outfitter";
  *
- * const skills = createSkillManager({
+ * const skills = createAgentManager({
  *   targets: [codexTarget({ codexHome: "/workspace/.codex-home" })],
  *   policy: { allowedOwners: ["acme", "anthropics"] },
  * });
@@ -19,15 +19,15 @@
  * ```
  */
 
-export { createSkillManager } from "./manager.js";
+export { createAgentManager } from "./manager.js";
 export type {
   AddOptions,
   InstallInput,
   ListOptions,
   RemoveOptions,
   ResolveInput,
-  SkillManager,
-  SkillManagerConfig,
+  AgentManager,
+  AgentManagerConfig,
   SyncOptions,
   VerifyOptions,
 } from "./manager.js";
@@ -52,7 +52,13 @@ export {
   serializeLockfile,
   writeLockfile,
 } from "./lockfile.js";
-export type { Lockfile, LockMcp, LockSkill, LockTarget } from "./lockfile.js";
+export type {
+  Lockfile,
+  LockInstruction,
+  LockMcp,
+  LockSkill,
+  LockTarget,
+} from "./lockfile.js";
 
 // -- targets ----------------------------------------------------------------
 export {
@@ -67,7 +73,9 @@ export {
   materializeToDir,
   mergeCodexToml,
   mergeMcpJson,
+  removeInstructionsFromFile,
   resolveAgainstRoot,
+  writeInstructionFile,
   toClaudeMcpEntry,
   toCodexMcpEntry,
   toNormalizedMcpEntry,
@@ -100,8 +108,20 @@ export { discoverSkills, CONVENTIONAL_SKILL_ROOTS } from "./discover.js";
 export { hashTree, hashCanonicalJson, HASH_PREFIX } from "./hash.js";
 export { normalizeRef, parseRefString, describeSource, sourceKey } from "./refs.js";
 export { parseSkillMd, readSkillMd, SKILL_FILE } from "./primitives/skill.js";
+export {
+  beginMarker,
+  discoverInstructions,
+  endMarker,
+  hashInstruction,
+  instructionNameFromPath,
+  managedRegionNames,
+  MARKER_TAG,
+  mergeInstructions,
+  readRegion,
+  renderRegion,
+} from "./primitives/instruction.js";
 export { describeMcpServer, mcpConfigHash, normalizeMcpServer } from "./primitives/mcp.js";
-export { DEFAULT_POLICY, resolvePolicy } from "./policy.js";
+export { DEFAULT_POLICY, decideInstructionTrust, decideMcpTrust, resolvePolicy } from "./policy.js";
 export { checkTree, scanTextForHiddenUnicode } from "./verify.js";
 export { defaultCacheDir } from "./paths.js";
 
@@ -114,21 +134,26 @@ export {
   ManifestError,
   NotImplementedError,
   PolicyViolationError,
-  SkillsmithError,
+  OutfitterError,
   SkillNotFoundError,
   SourceResolutionError,
   TargetError,
 } from "./errors.js";
-export type { SkillsmithErrorCode } from "./errors.js";
+export type { OutfitterErrorCode } from "./errors.js";
 
 // -- types ------------------------------------------------------------------
 export type {
+  AgentTarget,
   AuthRef,
   AuthResolver,
   EventSink,
   GitProvider,
   InstallResult,
-  InstalledSkill,
+  InstalledPrimitive,
+  Instruction,
+  InstructionRefEntry,
+  InstructionWriteInput,
+  InstructionWriteOutput,
   Manifest,
   ManifestSourceEntry,
   MaterializeInput,
@@ -140,19 +165,19 @@ export type {
   NormalizedRef,
   Primitive,
   PrimitiveKind,
+  ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
   ResolvedSkill,
   Resolution,
   Skill,
   SkillDependencies,
-  SkillEvent,
-  SkillRef,
-  SkillSource,
-  SkillTarget,
-  SkillWarning,
-  SkillWarningCode,
-  StructuredSkillRef,
+  OutfitterEvent,
+  PrimitiveRef,
+  PrimitiveSource,
+  OutfitterWarning,
+  OutfitterWarningCode,
+  StructuredPrimitiveRef,
   TargetContext,
   TrustPolicy,
   VerifyIssue,

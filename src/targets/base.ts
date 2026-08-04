@@ -1,18 +1,28 @@
 /** Shared behaviour for targets that materialize skills onto a filesystem. */
 
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { TargetError } from "../errors.js";
 import { hashTree } from "../hash.js";
 import {
+  ensureDir,
   expandTilde,
   isDirectory,
   pathExists,
   removeDir,
+  removeFile,
   replaceDirAtomic,
   restoreExecBits,
 } from "../fsutil.js";
-import type { MaterializeInput, MaterializeOutput, TargetContext } from "../types.js";
+import { mergeInstructions } from "../primitives/instruction.js";
+import { readIfExists, writeConfigIfChanged } from "./mcp-config.js";
+import type {
+  InstructionWriteInput,
+  InstructionWriteOutput,
+  MaterializeInput,
+  MaterializeOutput,
+  TargetContext,
+} from "../types.js";
 
 /**
  * Copy a staged skill into `<skillsDir>/<name>`, atomically.
@@ -52,6 +62,46 @@ export const installedHash = async (
   if (!(await pathExists(dest))) return undefined;
   const { contentHash } = await hashTree(dest);
   return contentHash;
+};
+
+/**
+ * Merge instruction fragments into a target's instruction file.
+ *
+ * Shared by every filesystem-backed target, because the only thing that differs
+ * between Codex and Claude here is which filename the harness reads.
+ */
+export const writeInstructionFile = async (
+  path: string,
+  input: InstructionWriteInput,
+): Promise<InstructionWriteOutput> => {
+  const merged = mergeInstructions(
+    await readIfExists(path),
+    input.instructions,
+    input.previouslyManaged,
+  );
+  // An empty result means every managed region was removed and nothing else was
+  // in the file; leaving an empty file behind would be litter.
+  if (merged.content.trim().length === 0) {
+    await removeFile(path);
+    return { path, written: [] };
+  }
+  await ensureDir(dirname(path));
+  await writeConfigIfChanged(path, merged.content);
+  return { path, written: merged.written };
+};
+
+export const removeInstructionsFromFile = async (
+  path: string,
+  names: readonly string[],
+): Promise<void> => {
+  const existing = await readIfExists(path);
+  if (existing === undefined) return;
+  const merged = mergeInstructions(existing, [], names);
+  if (merged.content.trim().length === 0) {
+    await removeFile(path);
+    return;
+  }
+  await writeConfigIfChanged(path, merged.content);
 };
 
 /** Resolve a configured directory: expand `~`, anchor relative paths at the manager root. */

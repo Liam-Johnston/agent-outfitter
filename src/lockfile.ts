@@ -1,13 +1,13 @@
 /**
- * `skills.lock.json` — the reproducibility record.
+ * `outfitter.lock.json` — the reproducibility record.
  *
  * Each skill pins an exact commit plus a content hash over its file tree, so a
  * fresh `sync()` is byte-identical even if the tag it was installed from moves.
  *
- * Beyond the spec's `skills` and `mcp` sections there is a `targets` section
- * recording where each skill landed and which MCP entries skillsmith owns in
- * each target's config. Without it, `remove()` cannot tell its own config
- * entries from the user's.
+ * Beyond the per-kind sections there is a `targets` section recording where each
+ * primitive landed and which config/instruction entries agent-outfitter owns in
+ * each target. Without it, `remove()` cannot tell its own entries from the
+ * user's, and pruning would have to clobber the whole file.
  */
 
 import { join } from "node:path";
@@ -18,9 +18,9 @@ import { LockfileError } from "./errors.js";
 import { formatZodError } from "./manifest.js";
 import { canonicalJson } from "./hash.js";
 import { pathExists, readTextFile, writeFileAtomic } from "./fsutil.js";
-import type { SkillSource } from "./types.js";
+import type { PrimitiveSource } from "./types.js";
 
-export const LOCKFILE_NAME = "skills.lock.json";
+export const LOCKFILE_NAME = "outfitter.lock.json";
 
 const sourceSchema = z.union([
   z
@@ -64,14 +64,30 @@ const lockMcpSchema = z
   })
   .strict();
 
+const lockInstructionSchema = z
+  .object({
+    source: sourceSchema,
+    ref: z.string(),
+    commit: z.string(),
+    subdir: z.string(),
+    contentHash: z.string(),
+    declaredBy: z.string(),
+    trusted: z.boolean().default(true),
+  })
+  .strict();
+
 const lockTargetSchema = z
   .object({
     /** skill name -> absolute install path (or target-defined identifier). */
     skills: z.record(z.string(), z.string()).default({}),
-    /** MCP server names skillsmith wrote into this target's config. */
+    /** MCP server names agent-outfitter wrote into this target's config. */
     mcp: z.array(z.string()).default([]),
-    /** Config file skillsmith touched for MCP, if any. */
+    /** Config file agent-outfitter touched for MCP, if any. */
     mcpConfigPath: z.string().optional(),
+    /** Instruction fragment names agent-outfitter wrote into this target. */
+    instructions: z.array(z.string()).default([]),
+    /** Instruction file agent-outfitter merged into, if any. */
+    instructionPath: z.string().optional(),
     /** Upload-style targets record their remote ids here. */
     skillIds: z.record(z.string(), z.string()).optional(),
   })
@@ -82,6 +98,7 @@ export const lockfileSchema = z
     version: z.literal(1),
     skills: z.record(z.string(), lockSkillSchema).default({}),
     mcp: z.record(z.string(), lockMcpSchema).default({}),
+    instructions: z.record(z.string(), lockInstructionSchema).default({}),
     targets: z.record(z.string(), lockTargetSchema).default({}),
   })
   .strict();
@@ -89,12 +106,14 @@ export const lockfileSchema = z
 export type Lockfile = z.infer<typeof lockfileSchema>;
 export type LockSkill = z.infer<typeof lockSkillSchema>;
 export type LockMcp = z.infer<typeof lockMcpSchema>;
+export type LockInstruction = z.infer<typeof lockInstructionSchema>;
 export type LockTarget = z.infer<typeof lockTargetSchema>;
 
 export const emptyLockfile = (): Lockfile => ({
   version: 1,
   skills: {},
   mcp: {},
+  instructions: {},
   targets: {},
 });
 
@@ -133,6 +152,7 @@ export const serializeLockfile = (lock: Lockfile): string => {
     version: lock.version,
     skills: sortRecord(lock.skills),
     mcp: sortRecord(lock.mcp),
+    instructions: sortRecord(lock.instructions),
     targets: sortRecord(lock.targets),
   };
   return `${JSON.stringify(JSON.parse(canonicalJson(ordered)), null, 2)}\n`;
@@ -144,8 +164,8 @@ export const writeLockfile = async (root: string, lock: Lockfile): Promise<strin
   return path;
 };
 
-/** Rebuild a `SkillSource` from its lockfile projection. */
-export const lockSourceToSkillSource = (source: LockSkill["source"]): SkillSource =>
+/** Rebuild a `PrimitiveSource` from its lockfile projection. */
+export const lockSourceToPrimitiveSource = (source: LockSkill["source"]): PrimitiveSource =>
   source.type === "local"
     ? { type: "local", path: source.path }
     : {
@@ -156,8 +176,8 @@ export const lockSourceToSkillSource = (source: LockSkill["source"]): SkillSourc
         ...(source.provider ? { provider: source.provider } : {}),
       };
 
-/** Project a `SkillSource` for storage — drops auth, which never enters the lockfile. */
-export const skillSourceToLockSource = (source: SkillSource): LockSkill["source"] =>
+/** Project a `PrimitiveSource` for storage — drops auth, which never enters the lockfile. */
+export const primitiveSourceToLockSource = (source: PrimitiveSource): LockSkill["source"] =>
   source.type === "local"
     ? { type: "local", path: source.path }
     : {

@@ -15,8 +15,10 @@ import { ensureDir, writeFileAtomic } from "../fsutil.js";
 import {
   installedHash,
   materializeToDir,
+  removeInstructionsFromFile,
   resolveAgainstRoot,
   unmaterializeFromDir,
+  writeInstructionFile,
 } from "./base.js";
 import {
   mergeMcpJson,
@@ -25,11 +27,14 @@ import {
   writeConfigIfChanged,
 } from "./mcp-config.js";
 import type {
+  AgentTarget,
+  InstructionWriteInput,
+  InstructionWriteOutput,
   MaterializeInput,
   MaterializeOutput,
   McpWriteInput,
   McpWriteOutput,
-  SkillTarget,
+  PrimitiveKind,
   TargetContext,
 } from "../types.js";
 
@@ -42,7 +47,7 @@ export interface ClaudeTargetOptions {
    * `.claude-plugin/plugin.json` and its skills inside.
    */
   mode?: "skills" | "plugin";
-  /** Plugin directory name for `mode: "plugin"`. Default `"skillsmith-skills"`. */
+  /** Plugin directory name for `mode: "plugin"`. Default `"agent-outfitter-skills"`. */
   pluginName?: string;
   /** `"user"` writes to `~/.claude/skills` instead of the project directory. */
   scope?: "project" | "user";
@@ -52,19 +57,23 @@ export interface ClaudeTargetOptions {
    * Claude Code app — does not read filesystem skills by default.
    */
   consumer?: "code" | "agent-sdk";
+  /** Instruction file Claude reads. Default `CLAUDE.md`. */
+  instructionFile?: string;
   name?: string;
 }
 
-export interface ClaudeTarget extends SkillTarget {
+export interface ClaudeTarget extends AgentTarget {
   /** Which consumer this target was configured for. Recorded for diagnostics. */
   readonly consumer: "code" | "agent-sdk";
   mcpConfigPath(ctx: TargetContext): string;
+  /** Absolute path to the `CLAUDE.md` this target merges instructions into. */
+  instructionPath(ctx: TargetContext): string;
 }
 
 export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget => {
   const mode = options.mode ?? "skills";
   const consumer = options.consumer ?? "code";
-  const pluginName = options.pluginName ?? "skillsmith-skills";
+  const pluginName = options.pluginName ?? "agent-outfitter-skills";
   const scope = options.scope ?? "project";
 
   /** The directory that *contains* `.claude/` (project scope) or is it (user scope). */
@@ -104,7 +113,7 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       `${JSON.stringify(
         {
           name: pluginName,
-          description: "Skills installed by skillsmith.",
+          description: "Skills installed by agent-outfitter.",
           version: "0.0.0",
         },
         null,
@@ -126,15 +135,30 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
     });
   };
 
+  /**
+   * `CLAUDE.md` sits at the project root, where Claude Code looks — not inside
+   * `.claude/`. User scope puts it in the Claude config dir instead.
+   */
+  const instructionPath = (ctx: TargetContext): string => {
+    const file = options.instructionFile ?? "CLAUDE.md";
+    if (mode === "plugin") return join(pluginDir(ctx), file);
+    return scope === "user" ? join(claudeDir(ctx), file) : join(baseDir(ctx), file);
+  };
+
   return {
     name: options.name ?? "claude",
+    supports: ["skill", "mcp", "instruction"],
     consumer,
 
     mcpConfigPath(ctx: TargetContext): string {
       return mcpPath(ctx);
     },
 
-    resolveSkillsDir(ctx: TargetContext): string {
+    instructionPath,
+
+    resolveDir(kind: PrimitiveKind, ctx: TargetContext): string {
+      if (kind === "mcp") return mcpPath(ctx);
+      if (kind === "instruction") return instructionPath(ctx);
       return skillsDir(ctx);
     },
 
@@ -170,6 +194,15 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       );
       await writeConfigIfChanged(path, merged.content);
       return { path, written: merged.written };
+    },
+
+    async writeInstructions(input: InstructionWriteInput): Promise<InstructionWriteOutput> {
+      await ensurePluginManifest(input.ctx);
+      return writeInstructionFile(instructionPath(input.ctx), input);
+    },
+
+    async removeInstructions(names: string[], ctx: TargetContext): Promise<void> {
+      await removeInstructionsFromFile(instructionPath(ctx), names);
     },
 
     async removeMcpServers(names: string[], ctx: TargetContext): Promise<void> {

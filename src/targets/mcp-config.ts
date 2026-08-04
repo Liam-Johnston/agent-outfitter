@@ -1,10 +1,10 @@
 /**
  * MCP config translation and merging.
  *
- * MCP servers are the only thing skillsmith writes into a harness's config —
+ * MCP servers are the only thing agent-outfitter writes into a harness's config —
  * skills themselves are auto-discovered from their directory. Every write here
  * is a *merge*: entries the user or another tool put in the file are preserved,
- * and skillsmith only ever adds, updates, or removes servers it manages.
+ * and agent-outfitter only ever adds, updates, or removes servers it manages.
  *
  * Secrets are referenced by environment-variable name and never inlined, so a
  * generated config is safe to bake into a container image.
@@ -14,7 +14,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { TargetError } from "../errors.js";
 import { pathExists, readTextFile, writeFileAtomic } from "../fsutil.js";
-import type { McpServer, ResolvedMcpServer, SkillWarning } from "../types.js";
+import type { McpServer, ResolvedMcpServer, OutfitterWarning } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Codex — $CODEX_HOME/config.toml, [mcp_servers.<name>]
@@ -41,7 +41,7 @@ export const toCodexMcpEntry = (server: McpServer): Record<string, unknown> => {
 export interface TomlMergeResult {
   content: string;
   written: string[];
-  warnings: SkillWarning[];
+  warnings: OutfitterWarning[];
 }
 
 /**
@@ -56,7 +56,7 @@ export const mergeCodexToml = (
   managedNames: readonly string[],
   configPath: string,
 ): TomlMergeResult => {
-  const warnings: SkillWarning[] = [];
+  const warnings: OutfitterWarning[] = [];
   let doc: Record<string, unknown> = {};
 
   if (existing && existing.trim().length > 0) {
@@ -83,7 +83,7 @@ export const mergeCodexToml = (
   const table = { ...(doc.mcp_servers as Record<string, unknown> | undefined) };
   const desired = new Set(servers.map((s) => s.name));
 
-  // Drop entries skillsmith previously managed that are no longer wanted.
+  // Drop entries agent-outfitter previously managed that are no longer wanted.
   for (const name of managedNames) {
     if (!desired.has(name)) delete table[name];
   }
@@ -168,7 +168,7 @@ export const mergeMcpJson = (
   return { content: `${JSON.stringify(next, null, 2)}\n`, written: servers.map((s) => s.name) };
 };
 
-/** skillsmith's own normalized shape, for `filesystemTarget` and custom runtimes. */
+/** agent-outfitter's own normalized shape, for `filesystemTarget` and custom runtimes. */
 export const toNormalizedMcpEntry = (server: McpServer): Record<string, unknown> => ({
   ...server,
 });

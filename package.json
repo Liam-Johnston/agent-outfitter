@@ -1,15 +1,18 @@
 {
-  "name": "skillsmith",
+  "name": "agent-outfitter",
   "version": "0.1.0",
-  "description": "Library-first agent-skill package manager: resolve, verify, and install agent skills and MCP servers into Claude Code, Codex, or any harness — from an await-able TypeScript API.",
+  "description": "Library-first agent package manager: resolve, verify, and install agent primitives — skills, MCP servers, and instruction fragments — into Claude Code, Codex, or any harness, from an await-able TypeScript API.",
   "keywords": [
     "agent",
+    "agents",
     "skills",
+    "mcp",
     "claude",
     "codex",
-    "mcp",
+    "agents-md",
     "package-manager",
-    "lockfile"
+    "lockfile",
+    "provisioning"
   ],
   "license": "MIT",
   "type": "module",
@@ -31,7 +34,7 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/liamjohnston/skillsmith.git"
+    "url": "git+https://github.com/Liam-Johnston/agent-outfitter.git"
   },
   "publishConfig": {
     "access": "public",
@@ -67,5 +70,9 @@
     "@types/node": "^26.1.2",
     "oxlint": "^1.77.0",
     "typescript": "^7.0.2"
+  },
+  "homepage": "https://github.com/Liam-Johnston/agent-outfitter#readme",
+  "bugs": {
+    "url": "https://github.com/Liam-Johnston/agent-outfitter/issues"
   }
 }

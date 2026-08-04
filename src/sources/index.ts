@@ -1,7 +1,7 @@
 /**
  * Source providers.
  *
- * A provider turns a `SkillSource` into (a) an immutable revision identifier
+ * A provider turns a `PrimitiveSource` into (a) an immutable revision identifier
  * and (b) a local directory holding that revision's tree. Everything above this
  * layer — discovery, hashing, policy, targets — is source-agnostic, so adding
  * an artifact store or a corporate SCM means implementing two methods.
@@ -9,22 +9,22 @@
 
 import { SourceResolutionError } from "../errors.js";
 import { fetchRepoTree, resolveCommit, type FetchContext } from "../fetch.js";
-import { isDirectory } from "../fsutil.js";
-import type { SkillSource } from "../types.js";
+import { pathExists } from "../fsutil.js";
+import type { PrimitiveSource } from "../types.js";
 
 export type ProviderContext = FetchContext;
 
 export interface SourceProvider {
   readonly name: string;
   /** Whether this provider handles the given source. */
-  supports(source: SkillSource): boolean;
+  supports(source: PrimitiveSource): boolean;
   /**
    * Pin the source to an immutable revision (a commit SHA for git). Return `""`
    * for sources with no revision concept, such as a working-copy directory.
    */
-  resolveRevision(source: SkillSource, ctx: ProviderContext): Promise<string>;
+  resolveRevision(source: PrimitiveSource, ctx: ProviderContext): Promise<string>;
   /** Produce a local directory containing the source tree at `revision`. */
-  materializeTree(source: SkillSource, revision: string, ctx: ProviderContext): Promise<string>;
+  materializeTree(source: PrimitiveSource, revision: string, ctx: ProviderContext): Promise<string>;
 }
 
 export const gitSourceProvider: SourceProvider = {
@@ -40,11 +40,12 @@ export const localSourceProvider: SourceProvider = {
   resolveRevision: async () => "",
   materializeTree: async (source) => {
     if (source.type !== "local") throw new SourceResolutionError("Not a local source.");
-    if (!(await isDirectory(source.path))) {
-      throw new SourceResolutionError(
-        `Local source path ${source.path} does not exist or is not a directory.`,
-        { path: source.path },
-      );
+    // A file is legitimate here: an instruction fragment is one file, whereas a
+    // skill is a folder. Which one is required is the caller's business.
+    if (!(await pathExists(source.path))) {
+      throw new SourceResolutionError(`Local source path ${source.path} does not exist.`, {
+        path: source.path,
+      });
     }
     return source.path;
   },
@@ -57,7 +58,7 @@ export const builtinSourceProviders: SourceProvider[] = [gitSourceProvider, loca
  * they can override a built-in for a specific host.
  */
 export const selectProvider = (
-  source: SkillSource,
+  source: PrimitiveSource,
   extra: readonly SourceProvider[] = [],
 ): SourceProvider => {
   for (const provider of [...extra, ...builtinSourceProviders]) {

@@ -2,7 +2,7 @@
  * `SKILL.md` reading.
  *
  * A skill is a folder whose root holds `SKILL.md`: YAML frontmatter followed by
- * instructions. skillsmith consumes `name`, `description`, and `dependencies`;
+ * instructions. agent-outfitter consumes `name`, `description`, and `dependencies`;
  * everything else in the frontmatter is preserved verbatim in `meta` so that
  * agent-specific fields survive a round trip.
  */
@@ -14,13 +14,14 @@ import { z } from "zod";
 
 import { SkillNotFoundError, SourceResolutionError } from "../errors.js";
 import { isFile, readTextFile } from "../fsutil.js";
-import { formatZodError, mcpDependencySchema } from "../manifest.js";
+import { formatZodError, instructionRefSchema, mcpDependencySchema } from "../manifest.js";
 import type {
+  InstructionRefEntry,
   NamedMcpServer,
   Primitive,
   PrimitiveKind,
   SkillDependencies,
-  SkillRef,
+  PrimitiveRef,
 } from "../types.js";
 
 export const SKILL_FILE = "SKILL.md";
@@ -37,13 +38,13 @@ const structuredRefSchema = z.object({
 });
 
 /**
- * Primitive kinds the manifest format reserves but M1 does not install.
+ * Primitive kinds the manifest format reserves but cannot install yet.
  *
  * They are accepted and surfaced as `unsupported` primitives rather than
- * rejected, so a skill authored against full APM parity still resolves today
- * and starts installing them when M3 lands — no manifest change required.
+ * rejected, so a skill authored against full APM parity resolves today and
+ * starts installing them later without a manifest change.
  */
-const FUTURE_KINDS = ["plugins", "agents", "prompts", "instructions", "hooks"] as const;
+const FUTURE_KINDS = ["plugins", "agents", "prompts", "hooks"] as const;
 
 const futureEntrySchema = z.union([z.string(), z.object({ name: z.string() }).loose()]);
 
@@ -51,10 +52,10 @@ const dependenciesSchema = z
   .object({
     skills: z.array(z.union([z.string(), structuredRefSchema])).optional(),
     mcp: z.array(mcpDependencySchema).optional(),
+    instructions: z.array(instructionRefSchema).optional(),
     plugins: z.array(futureEntrySchema).optional(),
     agents: z.array(futureEntrySchema).optional(),
     prompts: z.array(futureEntrySchema).optional(),
-    instructions: z.array(futureEntrySchema).optional(),
     hooks: z.array(futureEntrySchema).optional(),
   })
   .strict();
@@ -117,16 +118,20 @@ export const parseSkillMd = (content: string, origin: string): ParsedSkillMd => 
   };
 };
 
+/** A bare string ref is shorthand for `{ ref }`. */
+export const normalizeInstructionEntries = (
+  entries: readonly (string | { ref: string; name?: string; select?: string | string[] })[],
+): InstructionRefEntry[] => entries.map((e) => (typeof e === "string" ? { ref: e } : e));
+
 const SINGULAR_KIND: Record<(typeof FUTURE_KINDS)[number], PrimitiveKind> = {
   plugins: "plugin",
   agents: "agent",
   prompts: "prompt",
-  instructions: "instruction",
   hooks: "hook",
 };
 
 const parseDependencies = (value: unknown, origin: string): SkillDependencies => {
-  const empty: SkillDependencies = { skills: [], mcp: [], unsupported: [] };
+  const empty: SkillDependencies = { skills: [], mcp: [], instructions: [], unsupported: [] };
   if (value === undefined || value === null) return empty;
 
   const parsed = dependenciesInputSchema.safeParse(value);
@@ -138,7 +143,7 @@ const parseDependencies = (value: unknown, origin: string): SkillDependencies =>
   }
 
   if (Array.isArray(parsed.data)) {
-    return { ...empty, skills: parsed.data as SkillRef[] };
+    return { ...empty, skills: parsed.data as PrimitiveRef[] };
   }
 
   const unsupported: Primitive[] = [];
@@ -150,8 +155,9 @@ const parseDependencies = (value: unknown, origin: string): SkillDependencies =>
   }
 
   return {
-    skills: (parsed.data.skills ?? []) as SkillRef[],
+    skills: (parsed.data.skills ?? []) as PrimitiveRef[],
     mcp: (parsed.data.mcp ?? []) as NamedMcpServer[],
+    instructions: normalizeInstructionEntries(parsed.data.instructions ?? []),
     unsupported,
   };
 };

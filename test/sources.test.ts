@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { HashMismatchError, SourceResolutionError } from "../src/errors.js";
 import { parseRefAdvertisement, parsePktLines, selectRefCommit } from "../src/fetch.js";
-import { createSkillManager } from "../src/manager.js";
+import { createAgentManager } from "../src/manager.js";
 import { readLockfile } from "../src/lockfile.js";
 import { selectProvider, type SourceProvider } from "../src/sources/index.js";
 import { filesystemTarget } from "../src/targets/index.js";
@@ -54,7 +54,7 @@ describe("commit pinning", () => {
     const root = join(base, "project");
     await writeSkillRepo(repo, { a: { description: "One." } });
 
-    const manager = createSkillManager({
+    const manager = createAgentManager({
       root,
       cacheDir: join(base, "cache"),
       sources: [fixtureProvider(repo, commit)],
@@ -93,7 +93,7 @@ describe("commit pinning", () => {
     await first.manager.install({ refs });
 
     await writeSkillRepo(first.repo, { a: { description: "Version two." } });
-    const upgraded = createSkillManager({
+    const upgraded = createAgentManager({
       root: first.root,
       cacheDir: join(first.base, "cache"),
       sources: [fixtureProvider(first.repo, "b".repeat(40))],
@@ -108,7 +108,7 @@ describe("commit pinning", () => {
   test("requireLockHashMatch: false allows the swap through", async () => {
     const { base, repo, root } = await setup();
     const refs = ["git:https://fixture.test/acme/skills.git#v1.0.0"];
-    const lax = createSkillManager({
+    const lax = createAgentManager({
       root,
       cacheDir: join(base, "cache"),
       sources: [fixtureProvider(repo)],

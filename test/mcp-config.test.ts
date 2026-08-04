@@ -158,7 +158,7 @@ describe("Claude .mcp.json", () => {
 });
 
 describe("normalized MCP shape", () => {
-  test("passes skillsmith's own field names through", () => {
+  test("passes agent-outfitter's own field names through", () => {
     expect(toNormalizedMcpEntry(normalizeMcpServer(githubServer))).toEqual({
       transport: "http",
       url: "https://api.githubcopilot.com/mcp/",

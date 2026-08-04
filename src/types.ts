@@ -1,5 +1,5 @@
 /**
- * Core domain types for skillsmith.
+ * Core domain types for agent-outfitter.
  *
  * Everything the public API accepts or returns is declared here so consumers get
  * one import surface and the internals share a single vocabulary.
@@ -28,7 +28,7 @@ export type AuthResolver = (
 /** Git hosting providers with a known tarball endpoint. */
 export type GitProvider = "github" | "gitlab" | "bitbucket" | "sourcehut" | "git";
 
-export type SkillSource =
+export type PrimitiveSource =
   | {
       type: "git";
       /** Canonical clone URL, e.g. `https://github.com/acme/agent-skills.git`. */
@@ -47,22 +47,22 @@ export type SkillSource =
  * A ref string (`"github:acme/agent-skills/skills/pdf#v1.4.0"`) or its
  * structured equivalent.
  */
-export type SkillRef = string | StructuredSkillRef;
+export type PrimitiveRef = string | StructuredPrimitiveRef;
 
-export interface StructuredSkillRef {
-  source: SkillSource;
+export interface StructuredPrimitiveRef {
+  source: PrimitiveSource;
   /** Skill folder name(s) or glob(s) within the source. Omit = every skill found. */
   select?: string | string[];
   /**
    * Directory within the source that holds skill folders. When omitted,
-   * skillsmith probes the source root, then `skills/`, then `.agents/skills/`.
+   * agent-outfitter probes the source root, then `skills/`, then `.agents/skills/`.
    */
   skillsRoot?: string;
 }
 
 /** Post-normalization form used throughout the resolver. */
 export interface NormalizedRef {
-  source: SkillSource;
+  source: PrimitiveSource;
   select?: string[];
   skillsRoot?: string;
 }
@@ -80,7 +80,7 @@ export type PrimitiveKind =
   | "instruction"
   | "hook";
 
-/** The general unit of install. M1 implements `skill` and `mcp`. */
+/** The general unit of install. `skill`, `mcp`, and `instruction` install today. */
 export type Primitive =
   | { kind: "skill"; name: string }
   | { kind: "mcp"; name: string; server: McpServer }
@@ -121,21 +121,61 @@ export interface ResolvedMcpServer {
 }
 
 // ---------------------------------------------------------------------------
+// Instructions
+// ---------------------------------------------------------------------------
+
+/**
+ * A named fragment of agent instructions — the `AGENTS.md` / `CLAUDE.md` layer.
+ *
+ * Unlike a skill, an instruction is not a folder the harness discovers; it is
+ * text merged into a file the harness always reads. So it is stored as content
+ * rather than as a path, and each target decides which file it belongs in.
+ */
+export interface Instruction {
+  name: string;
+  /** The fragment body, verbatim, without any wrapper markers. */
+  content: string;
+}
+
+export interface ResolvedInstruction extends Instruction {
+  source: PrimitiveSource;
+  ref: string;
+  commit: string;
+  /** Path within the repo to the fragment file. */
+  subdir: string;
+  contentHash: string;
+  /** `"manifest"` for a root declaration, otherwise the skill that pulled it in. */
+  declaredBy: string;
+  /** False when a transitive fragment was dropped by policy. */
+  trusted: boolean;
+}
+
+/** A manifest or frontmatter reference to instruction fragments. */
+export interface InstructionRefEntry {
+  ref: string;
+  /** Override the derived name. Only valid when the ref points at one file. */
+  name?: string;
+  /** Filename globs, when the ref points at a directory of fragments. */
+  select?: string | string[];
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 
 /** Dependencies a skill declares in its `SKILL.md` frontmatter. */
 export interface SkillDependencies {
-  skills: SkillRef[];
+  skills: PrimitiveRef[];
   mcp: NamedMcpServer[];
-  /** Declared primitives of kinds this version cannot install yet (M2/M3). */
+  instructions: InstructionRefEntry[];
+  /** Declared primitives of kinds this version cannot install yet. */
   unsupported: Primitive[];
 }
 
 export interface Skill {
   name: string;
   description: string;
-  /** Remaining `SKILL.md` frontmatter, minus the fields skillsmith consumes. */
+  /** Remaining `SKILL.md` frontmatter, minus the fields agent-outfitter consumes. */
   meta: Record<string, unknown>;
   /** Relative POSIX paths within the skill folder. */
   files: string[];
@@ -143,7 +183,7 @@ export interface Skill {
 }
 
 export interface ResolvedSkill extends Skill {
-  source: SkillSource;
+  source: PrimitiveSource;
   /** The ref as requested — branch, tag, or SHA. `""` for local sources. */
   ref: string;
   /** Exact commit SHA. `""` for local sources. */
@@ -161,13 +201,18 @@ export interface ResolvedSkill extends Skill {
   transitive: boolean;
 }
 
-export interface InstalledSkill {
+export interface InstalledPrimitive {
   name: string;
+  /** Which kind of primitive this is. Lets one result list carry them all. */
+  kind: PrimitiveKind;
   /** Target adapter name. */
   target: string;
-  /** Absolute install path for that target. */
+  /**
+   * Where it landed: an install directory for tree primitives, or the config
+   * file a non-file primitive was merged into.
+   */
   path: string;
-  source: SkillSource;
+  source: PrimitiveSource;
   ref: string;
   commit: string;
   contentHash: string;
@@ -179,40 +224,50 @@ export interface InstalledSkill {
 // Warnings & events
 // ---------------------------------------------------------------------------
 
-export type SkillWarningCode =
+export type OutfitterWarningCode =
   | "duplicate-skill"
   | "scripts-present"
   | "hidden-unicode"
   | "transitive-mcp-dropped"
+  | "transitive-instruction-dropped"
   | "mcp-conflict"
+  | "instruction-conflict"
   | "not-implemented"
   | "target-config"
   | "manifest"
   | "source";
 
-export interface SkillWarning {
-  code: SkillWarningCode;
+export interface OutfitterWarning {
+  code: OutfitterWarningCode;
   message: string;
   /** Skill / MCP server / target the warning is about, when applicable. */
   subject?: string;
   detail?: Record<string, unknown>;
 }
 
-export type SkillEvent =
+export type OutfitterEvent =
   | { type: "resolve:start"; refs: number }
-  | { type: "source:listed"; source: SkillSource; skills: string[] }
-  | { type: "resolve:done"; skills: number; mcp: number; warnings: number }
+  | { type: "source:listed"; source: PrimitiveSource; skills: string[] }
+  | {
+      type: "resolve:done";
+      skills: number;
+      mcp: number;
+      instructions: number;
+      warnings: number;
+    }
   | { type: "skill:fetched"; name: string; commit: string; stagedDir: string }
   | { type: "skill:verified"; name: string; contentHash: string }
   | { type: "skill:materialized"; name: string; target: string; path: string }
   | { type: "skill:skipped"; name: string; target: string; path: string }
   | { type: "skill:removed"; name: string; target: string; path: string }
   | { type: "mcp:configured"; name: string; target: string; path: string }
+  | { type: "instruction:written"; name: string; target: string; path: string }
+  | { type: "instruction:removed"; name: string; target: string; path: string }
   | { type: "lockfile:written"; path: string }
   | { type: "install:done"; installed: number; skipped: number }
-  | { type: "warning"; warning: SkillWarning };
+  | { type: "warning"; warning: OutfitterWarning };
 
-export type EventSink = (event: SkillEvent) => void;
+export type EventSink = (event: OutfitterEvent) => void;
 
 // ---------------------------------------------------------------------------
 // Policy
@@ -235,11 +290,27 @@ export interface TrustPolicy {
   allowedMcpHosts?: string[];
   /** Commands a transitive stdio MCP server may run. */
   allowedMcpCommands?: string[];
+  /**
+   * Allow instruction fragments pulled in by a dependency rather than the
+   * manifest. Default false.
+   *
+   * Gated for the same reason as MCP, and arguably more urgently: an
+   * instruction fragment is text injected straight into the agent's standing
+   * context, so a dependency that could add one silently could rewrite the
+   * agent's operating rules.
+   */
+  allowTransitiveInstructions?: boolean;
   /** Local `file:`/`local:` sources bypass host checks. Default true. */
   allowLocalSources?: boolean;
 }
 
-export interface ResolvedPolicy extends Required<Omit<TrustPolicy, "allowedHosts" | "allowedOwners" | "allowedMcpHosts" | "allowedMcpCommands">> {
+export interface ResolvedPolicy
+  extends Required<
+    Omit<
+      TrustPolicy,
+      "allowedHosts" | "allowedOwners" | "allowedMcpHosts" | "allowedMcpCommands"
+    >
+  > {
   allowedHosts?: string[];
   allowedOwners?: string[];
   allowedMcpHosts?: string[];
@@ -255,7 +326,7 @@ export interface TargetContext {
   root: string;
   cacheDir: string;
   emit: EventSink;
-  warn: (warning: SkillWarning) => void;
+  warn: (warning: OutfitterWarning) => void;
 }
 
 export interface MaterializeInput {
@@ -263,6 +334,25 @@ export interface MaterializeInput {
   /** Absolute path to the verified, staged skill folder. */
   stagedDir: string;
   ctx: TargetContext;
+}
+
+export interface InstructionWriteInput {
+  instructions: ResolvedInstruction[];
+  /**
+   * Fragment names agent-outfitter wrote into this target on a previous run,
+   * from the lockfile. Anything here that is absent from `instructions` is a
+   * region this manager owns and should now delete; everything else in the file
+   * was written by a human and must survive untouched.
+   */
+  previouslyManaged: string[];
+  ctx: TargetContext;
+}
+
+export interface InstructionWriteOutput {
+  /** The instruction file that was merged into. */
+  path: string;
+  /** Fragment names actually written. */
+  written: string[];
 }
 
 export interface MaterializeOutput {
@@ -275,7 +365,7 @@ export interface MaterializeOutput {
 export interface McpWriteInput {
   servers: ResolvedMcpServer[];
   /**
-   * Server names skillsmith wrote into this target on a previous run, from the
+   * Server names agent-outfitter wrote into this target on a previous run, from the
    * lockfile. Anything here that is not in `servers` is one this manager owns
    * and should now remove — everything else in the config belongs to the user.
    */
@@ -290,11 +380,28 @@ export interface McpWriteOutput {
   written: string[];
 }
 
-export interface SkillTarget {
+/**
+ * A target is one agent harness's opinion about where things live.
+ *
+ * Primitive kinds land in genuinely different places and in different shapes —
+ * a skill is a copied folder, an MCP server is a config table, an instruction is
+ * a merged region of a markdown file — so each kind gets its own method rather
+ * than one `materialize` that switches on kind internally. `supports` declares
+ * which of them a target implements, so the manager can say precisely what will
+ * not be installed instead of silently dropping it.
+ */
+export interface AgentTarget {
   readonly name: string;
-  /** Directory this target reads skills from. */
-  resolveSkillsDir(ctx: TargetContext): string | Promise<string>;
-  /** Place a staged skill folder into the target. */
+  /** Primitive kinds this target can install. */
+  readonly supports: readonly PrimitiveKind[];
+
+  /**
+   * Where a given kind lives for this target — an install directory for tree
+   * primitives, or the file that config/instruction primitives merge into.
+   */
+  resolveDir(kind: PrimitiveKind, ctx: TargetContext): string | Promise<string>;
+
+  /** Place a staged file-tree primitive (today: skills) into the target. */
   materialize(input: MaterializeInput): Promise<MaterializeOutput>;
   /**
    * Content hash of what is currently installed under `name`, or `undefined`
@@ -304,10 +411,16 @@ export interface SkillTarget {
   currentHash?(name: string, ctx: TargetContext): Promise<string | undefined>;
   /** Remove a previously materialized skill. */
   unmaterialize?(name: string, ctx: TargetContext): Promise<void>;
+
   /** Merge MCP server entries into this target's config. Merge, never clobber. */
   writeMcpServers?(input: McpWriteInput): Promise<McpWriteOutput>;
-  /** Remove only the MCP entries skillsmith manages. */
+  /** Remove only the MCP entries agent-outfitter manages. */
   removeMcpServers?(names: string[], ctx: TargetContext): Promise<void>;
+
+  /** Merge instruction fragments into this target's instruction file. */
+  writeInstructions?(input: InstructionWriteInput): Promise<InstructionWriteOutput>;
+  /** Remove only the instruction regions agent-outfitter manages. */
+  removeInstructions?(names: string[], ctx: TargetContext): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +437,11 @@ export interface ManifestSourceEntry {
 export interface Manifest {
   version: 1;
   /** Target adapters, or built-in target names for YAML/JSON manifests. */
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   sources?: (string | ManifestSourceEntry)[];
   mcp?: NamedMcpServer[];
+  /** Instruction fragments to merge into each target's instruction file. */
+  instructions?: (string | InstructionRefEntry)[];
   policy?: TrustPolicy;
 }
 
@@ -341,25 +456,37 @@ export interface Resolution {
   skills: Map<string, ResolvedSkill>;
   /** Every trusted MCP server. Dropped ones appear only as warnings. */
   mcp: Map<string, ResolvedMcpServer>;
-  warnings: SkillWarning[];
-  /** Primitive kinds encountered but not yet implemented (M2/M3). */
+  /** Every trusted instruction fragment. Dropped ones appear only as warnings. */
+  instructions: Map<string, ResolvedInstruction>;
+  warnings: OutfitterWarning[];
+  /** Primitive kinds encountered but not yet installable. */
   unsupported: Primitive[];
 }
 
 export interface InstallResult {
-  installed: InstalledSkill[];
+  /** Everything written, across every kind and target. Check `kind` to filter. */
+  installed: InstalledPrimitive[];
   /** Already present with a matching content hash. */
-  skipped: InstalledSkill[];
+  skipped: InstalledPrimitive[];
   mcp: ResolvedMcpServer[];
-  warnings: SkillWarning[];
+  instructions: ResolvedInstruction[];
+  warnings: OutfitterWarning[];
   lockfilePath: string;
   /** True when `dryRun` was set — nothing was written. */
   dryRun: boolean;
 }
 
 export interface VerifyIssue {
-  kind: "missing" | "hash-mismatch" | "hidden-unicode" | "scripts" | "extraneous";
+  kind:
+    | "missing"
+    | "hash-mismatch"
+    | "hidden-unicode"
+    | "scripts"
+    | "extraneous"
+    | "instruction-drift";
   name: string;
+  /** Which primitive kind the issue is about. */
+  primitive?: PrimitiveKind;
   target?: string;
   path?: string;
   message: string;

@@ -1,7 +1,7 @@
 /** Built-in target adapters and name resolution for YAML/JSON manifests. */
 
 import { TargetError } from "../errors.js";
-import type { SkillTarget } from "../types.js";
+import type { AgentTarget } from "../types.js";
 import { claudeTarget } from "./claude.js";
 import { codexTarget } from "./codex.js";
 
@@ -19,8 +19,10 @@ export {
 export {
   installedHash,
   materializeToDir,
+  removeInstructionsFromFile,
   resolveAgainstRoot,
   unmaterializeFromDir,
+  writeInstructionFile,
 } from "./base.js";
 export {
   mergeCodexToml,
@@ -36,7 +38,7 @@ export {
  * Only adapters with sensible zero-argument defaults are listed —
  * `filesystemTarget` needs a directory, so it must be constructed in code.
  */
-const BUILTIN_TARGETS: Record<string, () => SkillTarget> = {
+const BUILTIN_TARGETS: Record<string, () => AgentTarget> = {
   codex: () => codexTarget(),
   "codex:user": () => codexTarget({ scope: "user" }),
   "codex:project": () => codexTarget({ scope: "project" }),
@@ -48,7 +50,7 @@ const BUILTIN_TARGETS: Record<string, () => SkillTarget> = {
 
 export const builtinTargetNames = (): string[] => Object.keys(BUILTIN_TARGETS);
 
-export const resolveTarget = (target: SkillTarget | string): SkillTarget => {
+export const resolveTarget = (target: AgentTarget | string): AgentTarget => {
   if (typeof target !== "string") return target;
   const factory = BUILTIN_TARGETS[target];
   if (!factory) {

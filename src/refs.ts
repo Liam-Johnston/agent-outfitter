@@ -12,9 +12,9 @@ import type {
   AuthRef,
   GitProvider,
   NormalizedRef,
-  SkillRef,
-  SkillSource,
-  StructuredSkillRef,
+  PrimitiveRef,
+  PrimitiveSource,
+  StructuredPrimitiveRef,
 } from "./types.js";
 
 const PROVIDER_ALIASES: Record<string, GitProvider | "local"> = {
@@ -59,7 +59,7 @@ export const normalizeGitUrl = (raw: string): string => {
 };
 
 /** Host of a git source, or `undefined` for local sources / unparseable URLs. */
-export const sourceHost = (source: SkillSource): string | undefined => {
+export const sourceHost = (source: PrimitiveSource): string | undefined => {
   if (source.type !== "git") return undefined;
   try {
     return new URL(normalizeGitUrl(source.url)).hostname;
@@ -69,7 +69,7 @@ export const sourceHost = (source: SkillSource): string | undefined => {
 };
 
 /** `owner` segment of a git source path, or `undefined`. */
-export const sourceOwner = (source: SkillSource): string | undefined => {
+export const sourceOwner = (source: PrimitiveSource): string | undefined => {
   if (source.type !== "git") return undefined;
   try {
     const { pathname } = new URL(normalizeGitUrl(source.url));
@@ -81,7 +81,7 @@ export const sourceOwner = (source: SkillSource): string | undefined => {
 };
 
 /** `owner/repo` for a git source (subgroups collapse into the owner segment). */
-export const sourceRepoPath = (source: SkillSource): string | undefined => {
+export const sourceRepoPath = (source: PrimitiveSource): string | undefined => {
   if (source.type !== "git") return undefined;
   try {
     const { pathname } = new URL(normalizeGitUrl(source.url));
@@ -91,7 +91,7 @@ export const sourceRepoPath = (source: SkillSource): string | undefined => {
   }
 };
 
-export const providerForSource = (source: SkillSource): GitProvider => {
+export const providerForSource = (source: PrimitiveSource): GitProvider => {
   if (source.type !== "git") return "git";
   if (source.provider) return source.provider;
   const host = sourceHost(source);
@@ -106,7 +106,7 @@ export const providerForSource = (source: SkillSource): GitProvider => {
 export const parseRefString = (
   input: string,
   options: { root?: string; auth?: AuthRef } = {},
-): { source: SkillSource } => {
+): { source: PrimitiveSource } => {
   const raw = input.trim();
   if (raw.length === 0) throw new SourceResolutionError("Empty source ref.");
 
@@ -121,7 +121,7 @@ export const parseRefString = (
   const scheme = colon === -1 ? "" : raw.slice(0, colon).toLowerCase();
   const provider = PROVIDER_ALIASES[scheme];
 
-  // A bare URL with no skillsmith scheme (`https://github.com/...`).
+  // A bare URL with no agent-outfitter scheme (`https://github.com/...`).
   if (!provider && isUrlLike(raw)) {
     return { source: gitSourceFromUrl(raw, options.auth) };
   }
@@ -162,7 +162,7 @@ export const parseRefString = (
   }
   const [owner, repo, ...subdirSegments] = segments as [string, string, ...string[]];
   const host = PROVIDER_HOSTS[provider];
-  const source: SkillSource = {
+  const source: PrimitiveSource = {
     type: "git",
     url: `https://${host}/${owner}/${repo}.git`,
     provider,
@@ -180,7 +180,7 @@ const splitRef = (value: string): [string, string | undefined] => {
   return [value.slice(0, hash), ref.length > 0 ? ref : undefined];
 };
 
-const gitSourceFromUrl = (rawUrl: string, auth?: AuthRef): SkillSource & { type: "git" } => {
+const gitSourceFromUrl = (rawUrl: string, auth?: AuthRef): PrimitiveSource & { type: "git" } => {
   const [urlPart, gitRef] = splitRef(rawUrl);
   const url = normalizeGitUrl(urlPart);
   let host: string;
@@ -189,7 +189,7 @@ const gitSourceFromUrl = (rawUrl: string, auth?: AuthRef): SkillSource & { type:
   } catch {
     throw new SourceResolutionError(`Could not parse git URL "${rawUrl}".`, { ref: rawUrl });
   }
-  const source: SkillSource & { type: "git" } = {
+  const source: PrimitiveSource & { type: "git" } = {
     type: "git",
     url,
     provider: KNOWN_HOST_PROVIDERS[host] ?? "git",
@@ -206,12 +206,12 @@ const toArray = (value: string | string[] | undefined): string[] | undefined => 
 };
 
 /** Turn any accepted ref shape into the resolver's `NormalizedRef`. */
-export const normalizeRef = (ref: SkillRef, options: { root?: string } = {}): NormalizedRef => {
+export const normalizeRef = (ref: PrimitiveRef, options: { root?: string } = {}): NormalizedRef => {
   if (typeof ref === "string") {
     const { source } = parseRefString(ref, options);
     return { source };
   }
-  const structured = ref as StructuredSkillRef;
+  const structured = ref as StructuredPrimitiveRef;
   const normalized: NormalizedRef = { source: structured.source };
   const select = toArray(structured.select);
   if (select) normalized.select = select;
@@ -220,13 +220,13 @@ export const normalizeRef = (ref: SkillRef, options: { root?: string } = {}): No
 };
 
 /** Stable identity for a source, used for cache keys and dedupe. */
-export const sourceKey = (source: SkillSource): string => {
+export const sourceKey = (source: PrimitiveSource): string => {
   if (source.type === "local") return `local:${source.path}`;
   return `git:${normalizeGitUrl(source.url)}#${source.ref ?? "HEAD"}`;
 };
 
 /** Human-readable source label — never contains a token. */
-export const describeSource = (source: SkillSource): string => {
+export const describeSource = (source: PrimitiveSource): string => {
   if (source.type === "local") return `local:${source.path}`;
   const repo = sourceRepoPath(source) ?? source.url;
   const sub = source.subdir ? `/${source.subdir}` : "";

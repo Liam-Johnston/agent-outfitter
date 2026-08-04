@@ -12,7 +12,7 @@ import { readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 
 import { PolicyViolationError } from "./errors.js";
-import type { ResolvedPolicy, SkillWarning } from "./types.js";
+import type { ResolvedPolicy, OutfitterWarning } from "./types.js";
 
 /**
  * Characters that render as nothing (or reorder what follows) in a diff view.
@@ -145,7 +145,7 @@ export const scriptFiles = (files: readonly string[]): string[] =>
   files.filter((f) => f.startsWith("scripts/"));
 
 export interface TreeCheckResult {
-  warnings: SkillWarning[];
+  warnings: OutfitterWarning[];
   hiddenUnicode: HiddenUnicodeFinding[];
   scripts: string[];
 }
@@ -162,7 +162,7 @@ export const checkTree = async (
   files: readonly string[],
   policy: ResolvedPolicy,
 ): Promise<TreeCheckResult> => {
-  const warnings: SkillWarning[] = [];
+  const warnings: OutfitterWarning[] = [];
   const scripts = scriptFiles(files);
 
   if (scripts.length > 0) {

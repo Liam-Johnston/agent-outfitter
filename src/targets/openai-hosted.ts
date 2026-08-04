@@ -19,7 +19,7 @@ import type {
   MaterializeInput,
   MaterializeOutput,
   ResolvedSkill,
-  SkillTarget,
+  AgentTarget,
   TargetContext,
 } from "../types.js";
 
@@ -87,7 +87,7 @@ const defaultUpload =
     return { skillId };
   };
 
-export const openaiHostedTarget = (options: OpenAiHostedTargetOptions): SkillTarget => {
+export const openaiHostedTarget = (options: OpenAiHostedTargetOptions): AgentTarget => {
   const upload =
     options.upload ??
     (options.client ? defaultUpload(options.client, options.path ?? "/skills") : undefined);
@@ -100,8 +100,10 @@ export const openaiHostedTarget = (options: OpenAiHostedTargetOptions): SkillTar
 
   return {
     name: options.name ?? "openai-hosted",
+    // Uploads skills only: there is no config file or instruction file to merge.
+    supports: ["skill"],
 
-    resolveSkillsDir(): string {
+    resolveDir(): string {
       // Nothing lands on disk; the identifier keeps diagnostics readable.
       return "openai://skills";
     },

@@ -6,38 +6,42 @@
  *
  * The walk is breadth-first over sources. Each wave lists a source's skills
  * from frontmatter alone, hashes the trees it selected, and enqueues whatever
- * those skills declare — skills, MCP servers, and (recorded but not installed)
- * the other APM primitive kinds.
+ * those skills declare — further skills, MCP servers, instruction fragments, and
+ * (recorded but not installed) the remaining primitive kinds.
  */
 
 import { DEFAULT_CONCURRENCY, mapLimit } from "./concurrency.js";
 import { discoverSkills } from "./discover.js";
-import { CycleError } from "./errors.js";
-import { hashTree } from "./hash.js";
+import { CycleError, PolicyViolationError } from "./errors.js";
+import { hashString, hashTree } from "./hash.js";
 import { listFiles } from "./fsutil.js";
-import { decideMcpTrust, assertSourceAllowed } from "./policy.js";
+import { assertSourceAllowed, decideInstructionTrust, decideMcpTrust } from "./policy.js";
+import { discoverInstructions, resolveInstruction } from "./primitives/instruction.js";
 import { resolveMcpServer } from "./primitives/mcp.js";
 import { describeSource, normalizeRef, sourceHost, sourceKey, sourceOwner } from "./refs.js";
 import { selectProvider, type SourceProvider } from "./sources/index.js";
-import { checkTree } from "./verify.js";
+import { checkTree, scanTextForHiddenUnicode } from "./verify.js";
 import type {
   AuthResolver,
   EventSink,
+  InstructionRefEntry,
   NamedMcpServer,
   NormalizedRef,
   Primitive,
+  ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
   ResolvedSkill,
   Resolution,
-  SkillRef,
-  SkillSource,
-  SkillWarning,
+  PrimitiveRef,
+  PrimitiveSource,
+  OutfitterWarning,
 } from "./types.js";
 
 export interface ResolverOptions {
   refs: NormalizedRef[];
   mcp: NamedMcpServer[];
+  instructions: InstructionRefEntry[];
   policy: ResolvedPolicy;
   cacheDir: string;
   root: string;
@@ -67,14 +71,15 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     concurrency = DEFAULT_CONCURRENCY,
   } = options;
 
-  const warnings: SkillWarning[] = [];
-  const warn = (warning: SkillWarning): void => {
+  const warnings: OutfitterWarning[] = [];
+  const warn = (warning: OutfitterWarning): void => {
     warnings.push(warning);
     emit({ type: "warning", warning });
   };
 
   const skills = new Map<string, ResolvedSkill>();
   const mcp = new Map<string, ResolvedMcpServer>();
+  const instructions = new Map<string, ResolvedInstruction>();
   const unsupported: Primitive[] = [];
 
   // Memoized per source so a monorepo referenced by ten skills is fetched once.
@@ -89,7 +94,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     addMcp(mcp, resolveMcpServer(entry, "manifest", true), warn);
   }
 
-  const tokenFor = async (source: SkillSource): Promise<string | undefined> => {
+  const tokenFor = async (source: PrimitiveSource): Promise<string | undefined> => {
     if (source.type !== "git") return undefined;
     if (source.auth) {
       if ("token" in source.auth) return source.auth.token;
@@ -134,6 +139,106 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     }
     return { tree: await treePromise, revision };
   };
+
+  const hashInstructionContent = (content: string): string => hashString(content);
+
+  /**
+   * Resolve instruction fragments for one entry.
+   *
+   * Fragments are scanned for hidden Unicode whenever the policy is on, because
+   * unlike a skill's supporting files this text goes straight into the agent's
+   * standing context — the highest-value place to hide an invisible directive.
+   */
+  const resolveInstructionEntry = async (
+    entry: InstructionRefEntry,
+    declaredBy: string,
+  ): Promise<void> => {
+    const decision = decideInstructionTrust(entry.name ?? entry.ref, declaredBy, policy);
+    if (!decision.trusted) {
+      if (decision.warning) warn(decision.warning);
+      return;
+    }
+
+    const normalized = normalizeRef(entry.ref, { root: options.root });
+    assertSourceAllowed(normalized.source, policy);
+    const origin = describeSource(normalized.source);
+    const { tree, revision } = await materialize(normalized);
+    const subdir = normalized.source.type === "git" ? (normalized.source.subdir ?? "") : "";
+    const base =
+      normalized.source.type === "local"
+        ? "" // a local ref already points at the file or directory
+        : subdir;
+
+    const found = await discoverInstructions(
+      normalized.source.type === "local" ? normalized.source.path : tree,
+      base,
+      entry,
+      origin,
+    );
+
+    for (const fragment of found) {
+      const existing = instructions.get(fragment.name);
+      if (existing) {
+        if (existing.contentHash !== hashInstructionContent(fragment.content)) {
+          warn({
+            code: "instruction-conflict",
+            subject: fragment.name,
+            message:
+              `Instruction fragment "${fragment.name}" is declared twice with different content ` +
+              `(by "${existing.declaredBy}" and "${declaredBy}"). Keeping the ` +
+              `${existing.declaredBy === "manifest" ? "manifest" : `"${existing.declaredBy}"`} version.`,
+            detail: { kept: existing.declaredBy, ignored: declaredBy },
+          });
+        }
+        continue;
+      }
+
+      if (policy.scan !== "off") {
+        const findings = scanTextForHiddenUnicode(
+          fragment.content,
+          fragment.subdir || fragment.name,
+        );
+        if (findings.length > 0) {
+          const summary = findings
+            .slice(0, 5)
+            .map((f) => `${f.file}:${f.line}:${f.column} ${f.codePoint} (${f.label})`)
+            .join(", ");
+          if (policy.scan === "deny") {
+            throw new PolicyViolationError(
+              `Instruction fragment "${fragment.name}" contains hidden Unicode characters and ` +
+                `policy.scan is "deny": ${summary}`,
+              { name: fragment.name, findings },
+            );
+          }
+          warn({
+            code: "hidden-unicode",
+            subject: fragment.name,
+            message:
+              `Instruction fragment "${fragment.name}" contains ${findings.length} hidden ` +
+              `Unicode character(s) — this text is spliced into the agent's context: ${summary}`,
+            detail: { findings },
+          });
+        }
+      }
+
+      instructions.set(
+        fragment.name,
+        resolveInstruction(fragment, {
+          source: normalized.source,
+          ref: normalized.source.type === "git" ? (normalized.source.ref ?? "") : "",
+          commit: revision,
+          declaredBy,
+          trusted: true,
+        }),
+      );
+    }
+  };
+
+  // Manifest-declared instruction fragments, resolved before the skill walk so a
+  // skill that names the same fragment loses the conflict to the operator.
+  for (const entry of options.instructions) {
+    await resolveInstructionEntry(entry, "manifest");
+  }
 
   let queue: QueueItem[] = refs.map((ref) => ({
     ref,
@@ -196,7 +301,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
         // Git sources pin the skill's subdir within the repo; local sources
         // record the skill folder itself, so nothing has to be re-derived when
         // the lockfile is replayed.
-        const source: SkillSource =
+        const source: PrimitiveSource =
           item.ref.source.type === "git"
             ? { ...item.ref.source, subdir: found.subdir }
             : { type: "local", path: found.dir };
@@ -225,6 +330,10 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
           mcpDependencies.push(server.name);
         }
 
+        for (const entry of found.dependencies.instructions) {
+          await resolveInstructionEntry(entry, found.name);
+        }
+
         for (const primitive of found.dependencies.unsupported) {
           unsupported.push(primitive);
           warn({
@@ -232,7 +341,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
             subject: primitive.name,
             message:
               `Skill "${found.name}" depends on a ${primitive.kind} ("${primitive.name}"). ` +
-              `skillsmith records ${primitive.kind} primitives but does not install them yet.`,
+              `agent-outfitter records ${primitive.kind} primitives but does not install them yet.`,
             detail: { kind: primitive.kind, declaredBy: found.name },
           });
         }
@@ -263,9 +372,15 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
 
   const order = topologicalOrder(skills);
 
-  emit({ type: "resolve:done", skills: skills.size, mcp: mcp.size, warnings: warnings.length });
+  emit({
+    type: "resolve:done",
+    skills: skills.size,
+    mcp: mcp.size,
+    instructions: instructions.size,
+    warnings: warnings.length,
+  });
 
-  return { order, skills, mcp, warnings, unsupported };
+  return { order, skills, mcp, instructions, warnings, unsupported };
 };
 
 /**
@@ -274,13 +389,13 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
  * Relative `local:` paths anchor to the declaring skill's own folder, the same
  * way a relative path in any other file does — so a sibling skill is `../name`.
  */
-const normalizeDependencyRef = (ref: SkillRef, declaringSkillDir: string): NormalizedRef =>
+const normalizeDependencyRef = (ref: PrimitiveRef, declaringSkillDir: string): NormalizedRef =>
   normalizeRef(ref, { root: declaringSkillDir });
 
 const addMcp = (
   map: Map<string, ResolvedMcpServer>,
   server: ResolvedMcpServer,
-  warn: (w: SkillWarning) => void,
+  warn: (w: OutfitterWarning) => void,
 ): void => {
   const existing = map.get(server.name);
   if (!existing) {
@@ -306,7 +421,7 @@ const addMcp = (
 /** Populate `dependsOn` with the resolved names of each skill's skill deps. */
 const linkDependencies = (
   skills: Map<string, ResolvedSkill>,
-  warn: (w: SkillWarning) => void,
+  warn: (w: OutfitterWarning) => void,
 ): void => {
   // Index by subdir basename as well as name: a dependency ref points at a
   // folder, while the graph is keyed by the declared skill name.
@@ -338,7 +453,7 @@ const linkDependencies = (
 };
 
 /** Candidate skill names a dependency ref could refer to (last path segment first). */
-const dependencyTargetNames = (ref: SkillRef): string[] => {
+const dependencyTargetNames = (ref: PrimitiveRef): string[] => {
   if (typeof ref === "string") {
     const withoutRef = ref.split("#")[0] ?? ref;
     const leaf = withoutRef.split("/").filter(Boolean).pop();

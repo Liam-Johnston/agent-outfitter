@@ -1,10 +1,10 @@
 /**
- * `SkillManager` — the public entrypoint.
+ * `AgentManager` — the public entrypoint.
  *
  * The split the whole design rests on: `resolve()` reads (network + cache) and
  * returns a plan; everything else acts on that plan. Nothing touches a target
  * until `install()`, `sync()`, `add()`, or `remove()` is called, and none of
- * them run skill code — skillsmith places files and merges config, and the
+ * them run skill code — agent-outfitter places files and merges config, and the
  * agent runtime executes whatever it finds under its own sandbox.
  */
 
@@ -17,21 +17,24 @@ import {
   SkillNotFoundError,
   TargetError,
 } from "./errors.js";
-import { hashTree } from "./hash.js";
-import { isDirectory, listFiles, pathExists } from "./fsutil.js";
+import { hashString, hashTree } from "./hash.js";
+import { isDirectory, listFiles, pathExists, readTextFile } from "./fsutil.js";
 import {
   emptyLockfile,
-  lockSourceToSkillSource,
+  lockSourceToPrimitiveSource,
   readLockfile,
-  skillSourceToLockSource,
+  primitiveSourceToLockSource,
   writeLockfile,
   type Lockfile,
+  type LockInstruction,
   type LockMcp,
   type LockSkill,
   type LockTarget,
 } from "./lockfile.js";
 import { lockfilePath as lockfilePathFor } from "./lockfile.js";
 import { isSourceEntry, loadManifest, writeManifest, type LoadedManifest } from "./manifest.js";
+import { readRegion } from "./primitives/instruction.js";
+import { normalizeInstructionEntries } from "./primitives/skill.js";
 import { defaultCacheDir } from "./paths.js";
 import { resolvePolicy } from "./policy.js";
 import { mcpConfigHash, normalizeMcpServer } from "./primitives/mcp.js";
@@ -43,19 +46,21 @@ import { checkTree } from "./verify.js";
 import type {
   AuthResolver,
   InstallResult,
-  InstalledSkill,
+  InstructionRefEntry,
+  InstalledPrimitive,
   Manifest,
   ManifestSourceEntry,
   NamedMcpServer,
   NormalizedRef,
+  ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
   ResolvedSkill,
   Resolution,
-  SkillEvent,
-  SkillRef,
-  SkillTarget,
-  SkillWarning,
+  OutfitterEvent,
+  PrimitiveRef,
+  AgentTarget,
+  OutfitterWarning,
   TargetContext,
   TrustPolicy,
   VerifyIssue,
@@ -66,13 +71,13 @@ import type {
 // Public option shapes
 // ---------------------------------------------------------------------------
 
-export interface SkillManagerConfig {
+export interface AgentManagerConfig {
   /** Working root — where the manifest and lockfile live. Default `process.cwd()`. */
   root?: string;
-  /** Manifest path or an inline manifest. Default: probe `<root>/skills.config.*`. */
+  /** Manifest path or an inline manifest. Default: probe `<root>/outfitter.config.*`. */
   manifest?: string | Manifest;
   /** Targets to install into. Overridable per call. */
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   /** Extra source providers. Built-ins (git, local) are always available. */
   sources?: SourceProvider[];
   /** Resolves tokens for private sources by host/owner. */
@@ -82,19 +87,21 @@ export interface SkillManagerConfig {
   /** Trust and verification policy. Merged over the manifest's own policy. */
   policy?: TrustPolicy;
   /** Structured progress and audit events. */
-  onEvent?: (event: SkillEvent) => void;
+  onEvent?: (event: OutfitterEvent) => void;
   /** Max parallel source fetches. Default 6. */
   concurrency?: number;
 }
 
 export interface ResolveInput {
   /** Extra refs to resolve alongside the manifest's sources. */
-  refs?: SkillRef[];
+  refs?: PrimitiveRef[];
   /** Extra MCP servers, treated as manifest-declared (trusted). */
   mcp?: NamedMcpServer[];
-  targets?: (SkillTarget | string)[];
+  /** Extra instruction fragments, treated as manifest-declared (trusted). */
+  instructions?: (string | InstructionRefEntry)[];
+  targets?: (AgentTarget | string)[];
   policy?: TrustPolicy;
-  /** Resolve only `refs`, ignoring the manifest's `sources`. */
+  /** Resolve only `refs`, `mcp`, and `instructions`, ignoring the manifest. */
   ignoreManifest?: boolean;
 }
 
@@ -112,7 +119,7 @@ export interface InstallInput extends ResolveInput {
 }
 
 export interface AddOptions {
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   /** Skill names or globs to select from the ref. */
   select?: string | string[];
   /** Write the ref into the manifest. Default true when the manifest is writable. */
@@ -121,36 +128,36 @@ export interface AddOptions {
 }
 
 export interface SyncOptions {
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   dryRun?: boolean;
   force?: boolean;
 }
 
 export interface ListOptions {
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   /** Include lockfile entries whose files are missing from the target. */
   includeMissing?: boolean;
 }
 
 export interface RemoveOptions {
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   /** Leave the manifest untouched. Default false. */
   keepManifest?: boolean;
   dryRun?: boolean;
 }
 
 export interface VerifyOptions {
-  targets?: (SkillTarget | string)[];
+  targets?: (AgentTarget | string)[];
   /** Also re-run the hidden-Unicode scan over installed files. Default true. */
   scan?: boolean;
 }
 
-export interface SkillManager {
+export interface AgentManager {
   resolve(input?: ResolveInput): Promise<Resolution>;
   install(input?: InstallInput): Promise<InstallResult>;
-  add(ref: SkillRef, opts?: AddOptions): Promise<InstallResult>;
+  add(ref: PrimitiveRef, opts?: AddOptions): Promise<InstallResult>;
   sync(opts?: SyncOptions): Promise<InstallResult>;
-  list(opts?: ListOptions): Promise<InstalledSkill[]>;
+  list(opts?: ListOptions): Promise<InstalledPrimitive[]>;
   remove(name: string, opts?: RemoveOptions): Promise<void>;
   verify(opts?: VerifyOptions): Promise<VerifyReport>;
   /** Absolute path of the lockfile this manager reads and writes. */
@@ -163,19 +170,19 @@ export interface SkillManager {
 // Implementation
 // ---------------------------------------------------------------------------
 
-export const createSkillManager = (config: SkillManagerConfig = {}): SkillManager =>
-  new SkillManagerImpl(config);
+export const createAgentManager = (config: AgentManagerConfig = {}): AgentManager =>
+  new AgentManagerImpl(config);
 
-class SkillManagerImpl implements SkillManager {
+class AgentManagerImpl implements AgentManager {
   readonly root: string;
   readonly lockfilePath: string;
 
-  private readonly config: SkillManagerConfig;
+  private readonly config: AgentManagerConfig;
   private readonly cacheDir: string;
   private readonly providers: SourceProvider[];
   private manifestCache?: LoadedManifest;
 
-  constructor(config: SkillManagerConfig) {
+  constructor(config: AgentManagerConfig) {
     this.config = config;
     this.root = resolvePath(config.root ?? process.cwd());
     this.cacheDir = config.cacheDir ? resolvePath(config.cacheDir) : defaultCacheDir();
@@ -185,7 +192,7 @@ class SkillManagerImpl implements SkillManager {
 
   // -- shared plumbing ------------------------------------------------------
 
-  private emit(event: SkillEvent): void {
+  private emit(event: OutfitterEvent): void {
     this.config.onEvent?.(event);
   }
 
@@ -197,7 +204,7 @@ class SkillManagerImpl implements SkillManager {
     return this.manifestCache;
   }
 
-  private context(warnings: SkillWarning[]): TargetContext {
+  private context(warnings: OutfitterWarning[]): TargetContext {
     return {
       root: this.root,
       cacheDir: this.cacheDir,
@@ -214,12 +221,12 @@ class SkillManagerImpl implements SkillManager {
     return resolvePolicy(manifest.policy, this.config.policy, override);
   }
 
-  private async targetsFor(override?: (SkillTarget | string)[]): Promise<SkillTarget[]> {
+  private async targetsFor(override?: (AgentTarget | string)[]): Promise<AgentTarget[]> {
     const { manifest } = await this.manifest();
     const chosen = override ?? this.config.targets ?? manifest.targets;
     if (!chosen || chosen.length === 0) {
       throw new TargetError(
-        `No install targets configured. Pass "targets" to createSkillManager(), to the call ` +
+        `No install targets configured. Pass "targets" to createAgentManager(), to the call ` +
           `itself, or declare them in the manifest — for example ` +
           `codexTarget({ codexHome }) or claudeTarget({ dir }).`,
       );
@@ -277,10 +284,15 @@ class SkillManagerImpl implements SkillManager {
     const { manifest } = await this.manifest();
     const refs = await this.refsFor(input);
     const mcp = [...(input.ignoreManifest ? [] : (manifest.mcp ?? [])), ...(input.mcp ?? [])];
+    const instructions = normalizeInstructionEntries([
+      ...(input.ignoreManifest ? [] : (manifest.instructions ?? [])),
+      ...(input.instructions ?? []),
+    ]);
 
     return resolveGraph({
       refs,
       mcp,
+      instructions,
       policy: await this.policyFor(input.policy),
       cacheDir: this.cacheDir,
       root: this.root,
@@ -346,7 +358,7 @@ class SkillManagerImpl implements SkillManager {
   private async materialize(args: {
     resolution: Resolution;
     selected: Set<string>;
-    targets: SkillTarget[];
+    targets: AgentTarget[];
     previous: Lockfile;
     dryRun: boolean;
     force: boolean;
@@ -354,11 +366,11 @@ class SkillManagerImpl implements SkillManager {
     preserveUnselected: boolean;
   }): Promise<InstallResult> {
     const { resolution, selected, targets, previous, dryRun } = args;
-    const warnings: SkillWarning[] = [...resolution.warnings];
+    const warnings: OutfitterWarning[] = [...resolution.warnings];
     const ctx = this.context(warnings);
 
-    const installed: InstalledSkill[] = [];
-    const skipped: InstalledSkill[] = [];
+    const installed: InstalledPrimitive[] = [];
+    const skipped: InstalledPrimitive[] = [];
 
     const order = resolution.order.filter((name) => selected.has(name));
 
@@ -374,7 +386,7 @@ class SkillManagerImpl implements SkillManager {
           : await target.currentHash?.(name, ctx).catch(() => undefined);
 
         if (!args.force && existing === skill.contentHash) {
-          const dir = await target.resolveSkillsDir(ctx);
+          const dir = await target.resolveDir("skill", ctx);
           const entry = installedEntry(skill, target.name, join(dir, name));
           skipped.push(entry);
           ctx.emit({ type: "skill:skipped", name, target: target.name, path: entry.path });
@@ -382,7 +394,7 @@ class SkillManagerImpl implements SkillManager {
         }
 
         if (dryRun) {
-          const dir = await target.resolveSkillsDir(ctx);
+          const dir = await target.resolveDir("skill", ctx);
           installed.push(installedEntry(skill, target.name, join(dir, name)));
           continue;
         }
@@ -430,6 +442,56 @@ class SkillManagerImpl implements SkillManager {
 
     // A partial (`only`) install says nothing about the skills it did not
     // touch, so it must never treat them as orphaned.
+    const trustedInstructions = [...resolution.instructions.values()].filter((i) => i.trusted);
+    const instructionPaths = new Map<string, string>();
+    const instructionsWritten = new Map<string, string[]>();
+
+    for (const target of targets) {
+      if (!target.writeInstructions) {
+        if (trustedInstructions.length > 0) {
+          ctx.warn({
+            code: "target-config",
+            subject: target.name,
+            message:
+              `Target "${target.name}" cannot merge instruction fragments, so ` +
+              `${trustedInstructions.map((i) => i.name).join(", ")} were not written for it.`,
+          });
+        }
+        continue;
+      }
+      const previouslyManaged = previous.targets[target.name]?.instructions ?? [];
+      if (dryRun) {
+        instructionsWritten.set(
+          target.name,
+          trustedInstructions.map((i) => i.name),
+        );
+        for (const instruction of trustedInstructions) {
+          installed.push(
+            installedInstructionEntry(
+              instruction,
+              target.name,
+              await target.resolveDir("instruction", ctx),
+            ),
+          );
+        }
+        continue;
+      }
+      const result = await target.writeInstructions({
+        instructions: trustedInstructions,
+        previouslyManaged,
+        ctx,
+      });
+      instructionPaths.set(target.name, result.path);
+      instructionsWritten.set(target.name, result.written);
+      for (const name of result.written) {
+        const instruction = resolution.instructions.get(name);
+        if (instruction) {
+          installed.push(installedInstructionEntry(instruction, target.name, result.path));
+        }
+        ctx.emit({ type: "instruction:written", name, target: target.name, path: result.path });
+      }
+    }
+
     const orphans = args.preserveUnselected
       ? []
       : Object.keys(previous.skills).filter((name) => !resolution.skills.has(name));
@@ -463,6 +525,8 @@ class SkillManagerImpl implements SkillManager {
       skipped,
       mcpPaths,
       mcpWritten,
+      instructionPaths,
+      instructionsWritten,
       preserveUnselected: args.preserveUnselected,
       // Orphans that were only warned about are still on disk, so they stay in
       // the lockfile: it records what is installed, not what was last resolved.
@@ -481,6 +545,7 @@ class SkillManagerImpl implements SkillManager {
       installed,
       skipped,
       mcp: trustedMcp,
+      instructions: trustedInstructions,
       warnings,
       lockfilePath: lockfileOut,
       dryRun,
@@ -490,12 +555,14 @@ class SkillManagerImpl implements SkillManager {
   private buildLockfile(args: {
     resolution: Resolution;
     selected: Set<string>;
-    targets: SkillTarget[];
+    targets: AgentTarget[];
     previous: Lockfile;
-    installed: InstalledSkill[];
-    skipped: InstalledSkill[];
+    installed: InstalledPrimitive[];
+    skipped: InstalledPrimitive[];
     mcpPaths: Map<string, string>;
     mcpWritten: Map<string, string[]>;
+    instructionPaths: Map<string, string>;
+    instructionsWritten: Map<string, string[]>;
     preserveUnselected: boolean;
     carryForward: string[];
   }): Lockfile {
@@ -513,7 +580,11 @@ class SkillManagerImpl implements SkillManager {
         for (const [targetName, targetEntry] of Object.entries(args.previous.targets)) {
           const path = targetEntry.skills[name];
           if (!path) continue;
-          const carried = (next.targets[targetName] ??= { skills: {}, mcp: [] });
+          const carried = (next.targets[targetName] ??= {
+            skills: {},
+            mcp: [],
+            instructions: [],
+          });
           carried.skills[name] = path;
           const id = targetEntry.skillIds?.[name];
           if (id) (carried.skillIds ??= {})[name] = id;
@@ -532,8 +603,17 @@ class SkillManagerImpl implements SkillManager {
       next.mcp[server.name] = toLockMcp(server);
     }
 
+    for (const instruction of args.resolution.instructions.values()) {
+      if (!instruction.trusted) continue;
+      next.instructions[instruction.name] = toLockInstruction(instruction);
+    }
+
     for (const target of args.targets) {
-      const entry: LockTarget = next.targets[target.name] ?? { skills: {}, mcp: [] };
+      const entry: LockTarget = next.targets[target.name] ?? {
+        skills: {},
+        mcp: [],
+        instructions: [],
+      };
       const skillIds: Record<string, string> = { ...entry.skillIds };
 
       for (const record of [...args.installed, ...args.skipped]) {
@@ -548,6 +628,13 @@ class SkillManagerImpl implements SkillManager {
       const path = args.mcpPaths.get(target.name);
       // Only record a config path once something was actually written there.
       if (path && written && written.length > 0) entry.mcpConfigPath = path;
+
+      const instructionsFor = args.instructionsWritten.get(target.name);
+      if (instructionsFor) entry.instructions = instructionsFor;
+      const instructionPath = args.instructionPaths.get(target.name);
+      if (instructionPath && instructionsFor && instructionsFor.length > 0) {
+        entry.instructionPath = instructionPath;
+      }
 
       // Drop skills that are gone from the graph unless this was a partial install.
       if (!args.preserveUnselected) {
@@ -564,8 +651,8 @@ class SkillManagerImpl implements SkillManager {
 
   // -- add ------------------------------------------------------------------
 
-  async add(ref: SkillRef, opts: AddOptions = {}): Promise<InstallResult> {
-    const structured: SkillRef =
+  async add(ref: PrimitiveRef, opts: AddOptions = {}): Promise<InstallResult> {
+    const structured: PrimitiveRef =
       typeof ref === "string" && opts.select !== undefined
         ? { source: parseRefString(ref, { root: this.root }).source, select: opts.select }
         : ref;
@@ -584,7 +671,7 @@ class SkillManagerImpl implements SkillManager {
     if (shouldSave) {
       if (!loaded.path || !loaded.writable) {
         throw new ManifestError(
-          `Cannot save to the manifest: ${loaded.path ? `${loaded.path} is not machine-editable` : "no skills.config.yaml or .json was found"}. ` +
+          `Cannot save to the manifest: ${loaded.path ? `${loaded.path} is not machine-editable` : "no outfitter.config.yaml or .json was found"}. ` +
             `Pass save: false to install without recording it.`,
           { path: loaded.path },
         );
@@ -647,7 +734,7 @@ class SkillManagerImpl implements SkillManager {
     lock: Lockfile,
     policy: ResolvedPolicy,
   ): Promise<Resolution> {
-    const warnings: SkillWarning[] = [];
+    const warnings: OutfitterWarning[] = [];
     const skills = new Map<string, ResolvedSkill>();
     const entries = Object.entries(lock.skills);
 
@@ -655,7 +742,7 @@ class SkillManagerImpl implements SkillManager {
       entries,
       this.config.concurrency ?? DEFAULT_CONCURRENCY,
       async ([name, entry]) => {
-        const source = lockSourceToSkillSource(entry.source);
+        const source = lockSourceToPrimitiveSource(entry.source);
         const subdir = source.type === "git" ? source.subdir : undefined;
         const provider = selectProvider(source, this.providers);
         const token = await this.tokenForLockedSource(source);
@@ -705,7 +792,7 @@ class SkillManagerImpl implements SkillManager {
         description: "",
         meta: {},
         files,
-        dependencies: { skills: [], mcp: [], unsupported: [] },
+        dependencies: { skills: [], mcp: [], instructions: [], unsupported: [] },
         source,
         ref: entry.ref,
         commit: entry.commit,
@@ -723,17 +810,54 @@ class SkillManagerImpl implements SkillManager {
       mcp.set(name, fromLockMcp(name, entry));
     }
 
+    // Instruction fragments are re-read from their pinned commit and re-hashed,
+    // the same reproducibility guarantee skills get.
+    const instructions = new Map<string, ResolvedInstruction>();
+    for (const [name, entry] of Object.entries(lock.instructions)) {
+      const source = lockSourceToPrimitiveSource(entry.source);
+      const provider = selectProvider(source, this.providers);
+      const token = await this.tokenForLockedSource(source);
+      const treeRoot = await provider.materializeTree(source, entry.commit, {
+        cacheDir: this.cacheDir,
+        ...(token ? { token } : {}),
+      });
+      // `subdir` is relative to the tree root for git, and to the configured
+      // path for local. An empty subdir means the base already is the file.
+      const base = source.type === "local" ? source.path : treeRoot;
+      const file = entry.subdir ? resolvePath(base, entry.subdir) : base;
+      const content = await readTextFile(file);
+      const contentHash = hashString(content);
+      if (contentHash !== entry.contentHash && policy.requireLockHashMatch !== false) {
+        throw new HashMismatchError(name, entry.contentHash, contentHash, {
+          commit: entry.commit,
+          primitive: "instruction",
+        });
+      }
+      instructions.set(name, {
+        name,
+        content,
+        source,
+        ref: entry.ref,
+        commit: entry.commit,
+        subdir: entry.subdir,
+        contentHash,
+        declaredBy: entry.declaredBy,
+        trusted: entry.trusted,
+      });
+    }
+
     return {
       order: topologicalOrder(skills),
       skills,
       mcp,
+      instructions,
       warnings,
       unsupported: [],
     };
   }
 
   private async tokenForLockedSource(
-    source: ReturnType<typeof lockSourceToSkillSource>,
+    source: ReturnType<typeof lockSourceToPrimitiveSource>,
   ): Promise<string | undefined> {
     if (source.type !== "git" || !this.config.auth) return undefined;
     const { sourceHost, sourceOwner } = await import("./refs.js");
@@ -742,14 +866,14 @@ class SkillManagerImpl implements SkillManager {
 
   // -- list -----------------------------------------------------------------
 
-  async list(opts: ListOptions = {}): Promise<InstalledSkill[]> {
+  async list(opts: ListOptions = {}): Promise<InstalledPrimitive[]> {
     const lock = await readLockfile(this.root);
     if (!lock) return [];
 
-    const warnings: SkillWarning[] = [];
+    const warnings: OutfitterWarning[] = [];
     const ctx = this.context(warnings);
     const targets = await this.targetsForList(opts.targets, lock);
-    const out: InstalledSkill[] = [];
+    const out: InstalledPrimitive[] = [];
 
     for (const target of targets) {
       const targetEntry = lock.targets[target.name];
@@ -761,9 +885,10 @@ class SkillManagerImpl implements SkillManager {
         if (!present && !skillId && !opts.includeMissing) continue;
         out.push({
           name,
+          kind: "skill",
           target: target.name,
-          path: recorded ?? join(await target.resolveSkillsDir(ctx), name),
-          source: lockSourceToSkillSource(entry.source),
+          path: recorded ?? join(await target.resolveDir("skill", ctx), name),
+          source: lockSourceToPrimitiveSource(entry.source),
           ref: entry.ref,
           commit: entry.commit,
           contentHash: entry.contentHash,
@@ -779,9 +904,9 @@ class SkillManagerImpl implements SkillManager {
 
   /** For read-only calls, fall back to whatever the lockfile recorded. */
   private async targetsForList(
-    override: (SkillTarget | string)[] | undefined,
+    override: (AgentTarget | string)[] | undefined,
     lock: Lockfile,
-  ): Promise<SkillTarget[]> {
+  ): Promise<AgentTarget[]> {
     try {
       return await this.targetsFor(override);
     } catch (error) {
@@ -796,9 +921,29 @@ class SkillManagerImpl implements SkillManager {
 
   async remove(name: string, opts: RemoveOptions = {}): Promise<void> {
     const lock = (await readLockfile(this.root)) ?? emptyLockfile();
-    const warnings: SkillWarning[] = [];
+    const warnings: OutfitterWarning[] = [];
     const ctx = this.context(warnings);
     const targets = await this.targetsForList(opts.targets, lock);
+
+    // `name` may address an instruction fragment rather than a skill.
+    if (!lock.skills[name] && lock.instructions[name]) {
+      if (!opts.dryRun) {
+        for (const target of targets) {
+          await target.removeInstructions?.([name], ctx);
+          const path = lock.targets[target.name]?.instructionPath;
+          if (path) {
+            this.emit({ type: "instruction:removed", name, target: target.name, path });
+          }
+        }
+      }
+      delete lock.instructions[name];
+      for (const entry of Object.values(lock.targets)) {
+        entry.instructions = entry.instructions.filter((f) => f !== name);
+      }
+      if (!opts.dryRun) await writeLockfile(this.root, lock);
+      if (!opts.keepManifest) await this.removeFromManifest(name, ctx, opts.dryRun === true);
+      return;
+    }
 
     const dependents = Object.entries(lock.skills)
       .filter(([other, entry]) => other !== name && entry.dependencies.includes(name))
@@ -832,12 +977,35 @@ class SkillManagerImpl implements SkillManager {
       }
     }
 
+    // Same rule for instructions: drop only the fragments this skill introduced.
+    const orphanedInstructions = Object.entries(lock.instructions)
+      .filter(([, entry]) => entry.declaredBy === name)
+      .map(([fragment]) => fragment);
+    if (orphanedInstructions.length > 0 && !opts.dryRun) {
+      for (const target of targets) {
+        await target.removeInstructions?.(orphanedInstructions, ctx);
+        const path = lock.targets[target.name]?.instructionPath;
+        for (const fragment of orphanedInstructions) {
+          if (path) {
+            this.emit({
+              type: "instruction:removed",
+              name: fragment,
+              target: target.name,
+              path,
+            });
+          }
+        }
+      }
+    }
+
     delete lock.skills[name];
     for (const server of orphanedMcp) delete lock.mcp[server];
+    for (const fragment of orphanedInstructions) delete lock.instructions[fragment];
     for (const entry of Object.values(lock.targets)) {
       delete entry.skills[name];
       if (entry.skillIds) delete entry.skillIds[name];
       entry.mcp = entry.mcp.filter((server) => !orphanedMcp.includes(server));
+      entry.instructions = entry.instructions.filter((f) => !orphanedInstructions.includes(f));
     }
 
     if (!opts.dryRun) await writeLockfile(this.root, lock);
@@ -959,6 +1127,7 @@ class SkillManagerImpl implements SkillManager {
         if (contentHash !== entry.contentHash) {
           issues.push({
             kind: "hash-mismatch",
+            primitive: "skill",
             name,
             target: target.name,
             path,
@@ -1009,6 +1178,50 @@ class SkillManagerImpl implements SkillManager {
               message: `"${name}" bundles executable scripts: ${check.scripts.join(", ")}.`,
             });
           }
+        }
+      }
+    }
+
+    // An instruction fragment's proof is the managed region in the target file:
+    // present, and hashing to what the lockfile pinned.
+    for (const target of targets) {
+      const targetEntry = lock.targets[target.name];
+      const path = targetEntry?.instructionPath;
+      if (!path) continue;
+      const document = await readTextFile(path).catch(() => undefined);
+      for (const name of targetEntry.instructions) {
+        const locked = lock.instructions[name];
+        if (!locked) continue;
+        checked += 1;
+        const region = document === undefined ? undefined : readRegion(document, name);
+        if (region === undefined) {
+          issues.push({
+            kind: "missing",
+            primitive: "instruction",
+            name,
+            target: target.name,
+            path,
+            message:
+              `Instruction fragment "${name}" is recorded in the lockfile but its managed ` +
+              `region is absent from ${path}.`,
+          });
+          continue;
+        }
+        const actual = hashString(`${region}\n`);
+        const trimmed = hashString(region);
+        if (actual !== locked.contentHash && trimmed !== locked.contentHash) {
+          issues.push({
+            kind: "instruction-drift",
+            primitive: "instruction",
+            name,
+            target: target.name,
+            path,
+            expected: locked.contentHash,
+            actual: trimmed,
+            message:
+              `The managed region for "${name}" in ${path} was edited in place. sync() will ` +
+              `restore the pinned fragment.`,
+          });
         }
       }
     }
@@ -1065,8 +1278,9 @@ const installedEntry = (
   target: string,
   path: string,
   skillId?: string,
-): InstalledSkill => ({
+): InstalledPrimitive => ({
   name: skill.name,
+  kind: "skill",
   target,
   path,
   source: skill.source,
@@ -1076,8 +1290,23 @@ const installedEntry = (
   ...(skillId ? { skillId } : {}),
 });
 
+const installedInstructionEntry = (
+  instruction: ResolvedInstruction,
+  target: string,
+  path: string,
+): InstalledPrimitive => ({
+  name: instruction.name,
+  kind: "instruction",
+  target,
+  path,
+  source: instruction.source,
+  ref: instruction.ref,
+  commit: instruction.commit,
+  contentHash: instruction.contentHash,
+});
+
 const toLockSkill = (skill: ResolvedSkill): LockSkill => ({
-  source: skillSourceToLockSource(skill.source),
+  source: primitiveSourceToLockSource(skill.source),
   ref: skill.ref,
   commit: skill.commit,
   contentHash: skill.contentHash,
@@ -1092,6 +1321,16 @@ const toLockMcp = (server: ResolvedMcpServer): LockMcp => ({
   declaredBy: server.declaredBy,
   trusted: server.trusted,
   configHash: server.configHash,
+});
+
+const toLockInstruction = (instruction: ResolvedInstruction): LockInstruction => ({
+  source: primitiveSourceToLockSource(instruction.source),
+  ref: instruction.ref,
+  commit: instruction.commit,
+  subdir: instruction.subdir,
+  contentHash: instruction.contentHash,
+  declaredBy: instruction.declaredBy,
+  trusted: instruction.trusted,
 });
 
 const fromLockMcp = (name: string, entry: LockMcp): ResolvedMcpServer => {
@@ -1123,9 +1362,13 @@ const fromLockMcp = (name: string, entry: LockMcp): ResolvedMcpServer => {
  * A read-only stand-in for a target named in the lockfile but not configured on
  * this manager, so `list()`/`verify()` still work without target construction.
  */
-const stubTarget = (name: string, lock: Lockfile): SkillTarget => ({
+const stubTarget = (name: string, lock: Lockfile): AgentTarget => ({
   name,
-  resolveSkillsDir: () => lock.targets[name]?.mcpConfigPath ?? "",
+  supports: [],
+  resolveDir: (kind) =>
+    (kind === "instruction"
+      ? lock.targets[name]?.instructionPath
+      : lock.targets[name]?.mcpConfigPath) ?? "",
   materialize: () => {
     throw new TargetError(
       `Target "${name}" is recorded in the lockfile but is not configured on this manager, ` +
@@ -1136,7 +1379,7 @@ const stubTarget = (name: string, lock: Lockfile): SkillTarget => ({
 });
 
 const toManifestEntry = (
-  ref: SkillRef,
+  ref: PrimitiveRef,
   select: string | string[] | undefined,
 ): string | ManifestSourceEntry => {
   // Always store `select` as a list: a one-element list reads the same as a

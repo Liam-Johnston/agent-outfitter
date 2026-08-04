@@ -12,9 +12,9 @@ import { join } from "node:path";
 import { downloadTemplate, type TemplateInfo, type TemplateProvider } from "giget";
 
 import { AuthError, SourceResolutionError } from "./errors.js";
-import { ensureDir, isDirectory, listFiles, pathExists, removeDir, writeFileAtomic } from "./fsutil.js";
+import { ensureDir, listFiles, pathExists, removeDir, writeFileAtomic } from "./fsutil.js";
 import { describeSource, normalizeGitUrl, providerForSource, sourceRepoPath } from "./refs.js";
-import type { SkillSource } from "./types.js";
+import type { PrimitiveSource } from "./types.js";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -43,7 +43,7 @@ const httpGet = async (
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
     return await fetch(url, {
-      headers: { "user-agent": "skillsmith", ...init.headers },
+      headers: { "user-agent": "agent-outfitter", ...init.headers },
       signal: controller.signal,
       redirect: "follow",
     });
@@ -71,10 +71,10 @@ interface ResolveAttempt {
 // Commit resolution
 // ---------------------------------------------------------------------------
 
-const gitlabProjectPath = (source: SkillSource): string =>
+const gitlabProjectPath = (source: PrimitiveSource): string =>
   encodeURIComponent(sourceRepoPath(source) ?? "");
 
-const apiCommitUrl = (source: SkillSource & { type: "git" }): string | undefined => {
+const apiCommitUrl = (source: PrimitiveSource & { type: "git" }): string | undefined => {
   const provider = providerForSource(source);
   const repoPath = sourceRepoPath(source);
   if (!repoPath) return undefined;
@@ -94,7 +94,7 @@ const apiCommitUrl = (source: SkillSource & { type: "git" }): string | undefined
 };
 
 const commitFromApi = async (
-  source: SkillSource & { type: "git" },
+  source: PrimitiveSource & { type: "git" },
   ctx: FetchContext,
 ): Promise<ResolveAttempt> => {
   const url = apiCommitUrl(source);
@@ -173,7 +173,7 @@ export const selectRefCommit = (refs: Map<string, string>, ref: string | undefin
 };
 
 const commitFromSmartHttp = async (
-  source: SkillSource & { type: "git" },
+  source: PrimitiveSource & { type: "git" },
   ctx: FetchContext,
 ): Promise<ResolveAttempt> => {
   const url = `${normalizeGitUrl(source.url)}/info/refs?service=git-upload-pack`;
@@ -198,7 +198,7 @@ const commitFromSmartHttp = async (
  * Doing this at resolve time is what makes `sync()` reproducible: a tag that
  * later moves does not change what a locked install fetches.
  */
-export const resolveCommit = async (source: SkillSource, ctx: FetchContext): Promise<string> => {
+export const resolveCommit = async (source: PrimitiveSource, ctx: FetchContext): Promise<string> => {
   if (source.type === "local") return "";
   // A full SHA is already immutable; asking the host to confirm it wastes a
   // round trip and would fail for a commit not reachable from any ref.
@@ -229,7 +229,7 @@ export const resolveCommit = async (source: SkillSource, ctx: FetchContext): Pro
 // Tree fetching
 // ---------------------------------------------------------------------------
 
-const tarballUrl = (source: SkillSource & { type: "git" }, commit: string): string => {
+const tarballUrl = (source: PrimitiveSource & { type: "git" }, commit: string): string => {
   const provider = providerForSource(source);
   const repoPath = sourceRepoPath(source);
   const origin = new URL(normalizeGitUrl(source.url)).origin;
@@ -256,7 +256,7 @@ const tarballUrl = (source: SkillSource & { type: "git" }, commit: string): stri
 /** Where an extracted repo tree lives. Keyed by commit, so it is immutable. */
 export const repoCachePath = (
   cacheDir: string,
-  source: SkillSource,
+  source: PrimitiveSource,
   commit: string,
 ): string => {
   if (source.type === "local") return source.path;
@@ -280,13 +280,13 @@ const cacheSentinelPath = (dest: string): string => `${dest}.complete`;
  * discarded rather than reused.
  */
 export const fetchRepoTree = async (
-  source: SkillSource,
+  source: PrimitiveSource,
   commit: string,
   ctx: FetchContext,
 ): Promise<string> => {
   if (source.type === "local") {
-    if (!(await isDirectory(source.path))) {
-      throw new SourceResolutionError(`Local source path ${source.path} is not a directory.`, {
+    if (!(await pathExists(source.path))) {
+      throw new SourceResolutionError(`Local source path ${source.path} does not exist.`, {
         path: source.path,
       });
     }
@@ -317,8 +317,8 @@ export const fetchRepoTree = async (
   const provider: TemplateProvider = () => info;
 
   try {
-    await downloadTemplate("skillsmith:tree", {
-      providers: { skillsmith: provider },
+    await downloadTemplate("outfitter:tree", {
+      providers: { outfitter: provider },
       registry: false,
       dir: dest,
       force: true,

@@ -25,4 +25,4 @@ jobs:
       # The published entrypoint must import and run under plain Node, not just
       # Bun — the package targets Node >= 18 and lists no Bun dependency.
       - name: Verify the built package loads under Node
-        run: node -e "import('./dist/index.js').then(m => { if (typeof m.createSkillManager !== 'function') { throw new Error('missing createSkillManager export'); } console.log('dist/index.js loads under Node ' + process.version); })"
+        run: node -e "import('./dist/index.js').then(m => { if (typeof m.createAgentManager !== 'function') { throw new Error('missing createAgentManager export'); } console.log('dist/index.js loads under Node ' + process.version); })"

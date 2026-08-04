@@ -12,8 +12,8 @@ import { describeSource, sourceHost, sourceOwner } from "./refs.js";
 import type {
   McpServer,
   ResolvedPolicy,
-  SkillSource,
-  SkillWarning,
+  PrimitiveSource,
+  OutfitterWarning,
   TrustPolicy,
 } from "./types.js";
 
@@ -22,6 +22,7 @@ export const DEFAULT_POLICY: ResolvedPolicy = {
   scripts: "warn",
   scan: "warn",
   allowTransitiveMcp: false,
+  allowTransitiveInstructions: false,
   allowLocalSources: true,
 };
 
@@ -43,7 +44,7 @@ const hostAllowed = (host: string, allowed: readonly string[]): boolean =>
     return host === norm || host.endsWith(`.${norm}`);
   });
 
-export const assertSourceAllowed = (source: SkillSource, policy: ResolvedPolicy): void => {
+export const assertSourceAllowed = (source: PrimitiveSource, policy: ResolvedPolicy): void => {
   if (source.type === "local") {
     if (policy.allowLocalSources === false) {
       throw new PolicyViolationError(
@@ -79,7 +80,7 @@ export const assertSourceAllowed = (source: SkillSource, policy: ResolvedPolicy)
 
 export interface McpTrustDecision {
   trusted: boolean;
-  warning?: SkillWarning;
+  warning?: OutfitterWarning;
 }
 
 /**
@@ -123,6 +124,38 @@ export const decideMcpTrust = (
         `set policy.allowTransitiveMcp=true, or allowlist it via policy.allowedMcpHosts / ` +
         `policy.allowedMcpCommands.`,
       detail: { declaredBy, host },
+    },
+  };
+};
+
+/**
+ * Gate an instruction fragment.
+ *
+ * Same trust boundary as MCP, and for a sharper reason: an instruction fragment
+ * is text spliced directly into the agent's standing context. A dependency that
+ * could add one silently could rewrite the agent's operating rules without
+ * appearing anywhere in the operator's manifest. So a fragment reached through a
+ * skill is dropped unless the operator opts in.
+ */
+export const decideInstructionTrust = (
+  name: string,
+  declaredBy: string,
+  policy: ResolvedPolicy,
+): McpTrustDecision => {
+  if (declaredBy === "manifest") return { trusted: true };
+  if (policy.allowTransitiveInstructions) return { trusted: true };
+
+  return {
+    trusted: false,
+    warning: {
+      code: "transitive-instruction-dropped",
+      subject: name,
+      message:
+        `Instruction fragment "${name}" was pulled in by "${declaredBy}" but is not declared ` +
+        `in the manifest. It was dropped, because an instruction fragment edits the agent's ` +
+        `standing context. Declare it under "instructions:" or set ` +
+        `policy.allowTransitiveInstructions=true.`,
+      detail: { declaredBy },
     },
   };
 };
