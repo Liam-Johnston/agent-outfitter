@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "promise", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "ignorePatterns": ["dist/**", "node_modules/**"],
+  "rules": {
+    "no-console": "error",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "off",
+    "unicorn/prefer-node-protocol": "error",
+    "promise/no-return-wrap": "error",
+    "import/no-cycle": "error",
+
+    // Sequential awaits are load-bearing here: skills install in dependency
+    // order, and each is written to every target before the next begins.
+    // Parallelism that is safe goes through mapLimit instead.
+    "no-await-in-loop": "off",
+
+    // `toSorted` would raise the runtime floor above the Node >= 18 this
+    // package supports; every `.sort()` in src is on a freshly built array.
+    "unicorn/no-array-sort": "off",
+
+    // Closures defined inside a factory or a describe block are deliberate.
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/prefer-array-find": "off"
+  },
+  "overrides": [
+    {
+      "files": ["test/**/*.ts"],
+      "rules": {
+        "typescript/no-explicit-any": "off"
+      }
+    }
+  ]
+}

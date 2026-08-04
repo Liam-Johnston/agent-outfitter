@@ -1,0 +1,33 @@
+# Example manifest, in the YAML form. Equivalent to examples/skills.config.ts,
+# minus the ability to compute values. This form is machine-editable, so
+# `add()` and `remove()` can write it back.
+version: 1
+
+targets: [codex, claude]
+
+sources:
+  - ref: github:anthropics/skills#main
+    select: [pdf, xlsx, docx]
+  - github:anthropics/skills/skills/mcp-builder
+  - ref: github:acme/internal-skills#main
+    auth: { env: SKILLS_TOKEN }
+  - local:./skills
+
+mcp:
+  - name: github
+    transport: http
+    url: https://api.githubcopilot.com/mcp/
+    auth: { bearerEnv: GITHUB_MCP_TOKEN }
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+
+policy:
+  allowedHosts: [github.com]
+  allowedOwners: [acme, anthropics]
+  requireLockHashMatch: true
+  scripts: warn
+  scan: warn
+  allowTransitiveMcp: false
+  allowedMcpHosts: [api.githubcopilot.com]

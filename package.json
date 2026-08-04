@@ -1,0 +1,71 @@
+{
+  "name": "skillsmith",
+  "version": "0.1.0",
+  "description": "Library-first agent-skill package manager: resolve, verify, and install agent skills and MCP servers into Claude Code, Codex, or any harness — from an await-able TypeScript API.",
+  "keywords": [
+    "agent",
+    "skills",
+    "claude",
+    "codex",
+    "mcp",
+    "package-manager",
+    "lockfile"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liamjohnston/skillsmith.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "bun run clean && bun build ./src/index.ts --outdir dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "lint": "oxlint --deny-warnings",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "release": "changeset publish",
+    "version": "changeset version",
+    "changeset": "changeset"
+  },
+  "dependencies": {
+    "giget": "^3.3.1",
+    "smol-toml": "^1.7.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "openai": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.1",
+    "@types/bun": "latest",
+    "@types/node": "^26.1.2",
+    "oxlint": "^1.77.0",
+    "typescript": "^7.0.2"
+  }
+}
