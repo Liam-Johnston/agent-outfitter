@@ -1,5 +1,7 @@
 # agent-outfitter
 
+[![npm](https://img.shields.io/npm/v/agent-outfitter.svg)](https://www.npmjs.com/package/agent-outfitter)
+
 Install agent skills, MCP servers, and instruction fragments from git into Claude Code, Codex,
 or any harness you write an adapter for. It is a TypeScript library, not a CLI: you import a
 function, `await` it, and get a typed result. Every primitive is pinned to an exact commit and
