@@ -3,6 +3,9 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# Bind-mounted output from the container smoke tests
+test-output/
+
 # Local scratch
 .DS_Store
 *.log

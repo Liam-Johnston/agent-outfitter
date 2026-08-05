@@ -1,0 +1,16 @@
+# The builder stage runs its own install and build, so shipping either into the
+# context would only slow the copy down and risk baking host-built artifacts
+# (and host-specific native modules) into the image.
+node_modules
+dist
+test-output
+
+.git
+.github
+.changeset
+test
+examples
+CHANGELOG.md
+README.md
+LICENSE
+*.log

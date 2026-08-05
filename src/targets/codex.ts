@@ -14,6 +14,7 @@ import { ensureDir } from "../fsutil.js";
 import { toCodexMcpEntry } from "./mcp-config.js";
 import { mergeCodexToml, readIfExists, writeConfigIfChanged } from "./mcp-config.js";
 import {
+  createContextCapture,
   installedHash,
   materializeToDir,
   removeInstructionsFromFile,
@@ -21,6 +22,7 @@ import {
   unmaterializeFromDir,
   writeInstructionFile,
 } from "./base.js";
+import type { CodexSdkOptions } from "./sdk.js";
 import { TargetError } from "../errors.js";
 import type {
   AgentTarget,
@@ -70,6 +72,21 @@ export interface CodexTarget extends AgentTarget {
   configPath(ctx: TargetContext): string;
   /** Absolute path to the `AGENTS.md` this target merges instructions into. */
   instructionPath(ctx: TargetContext): string;
+  /**
+   * Everything `@openai/codex-sdk` needs to see what this target installed.
+   *
+   * ```ts
+   * const sdk = codexT.sdkOptions();
+   * const codex = new Codex({ env: { ...process.env, ...sdk.env }, config: sdk.config });
+   * ```
+   *
+   * Available in both `mcpMode`s: with `"file"` the entries are also on disk in
+   * `config.toml`, and passing them again is harmless.
+   *
+   * Call after `install()` or `sync()` — the MCP entries are populated by the
+   * install. The context defaults to the one the last install ran under.
+   */
+  sdkOptions(ctx?: TargetContext): CodexSdkOptions;
 }
 
 const defaultCodexHome = (): string => process.env.CODEX_HOME ?? join(homedir(), ".codex");
@@ -78,6 +95,7 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
   const scope = options.scope ?? "user";
   const mcpMode = options.mcpMode ?? "file";
   const overrides: { mcp_servers: Record<string, unknown> } = { mcp_servers: {} };
+  const contexts = createContextCapture();
 
   const homeDir = (ctx: TargetContext): string =>
     resolveAgainstRoot(ctx, options.codexHome ?? defaultCodexHome());
@@ -117,19 +135,34 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
 
     instructionPath,
 
+    sdkOptions(override?: TargetContext): CodexSdkOptions {
+      const ctx = contexts.resolve(override);
+      return {
+        env: { CODEX_HOME: homeDir(ctx) },
+        // Copied, so a later install cannot mutate an object already handed to
+        // an SDK constructor.
+        config: { mcp_servers: { ...overrides.mcp_servers } },
+        skillsDir: skillsDir(ctx),
+        instructionPath: instructionPath(ctx),
+      };
+    },
+
     resolveDir(kind: PrimitiveKind, ctx: TargetContext): string {
+      contexts.capture(ctx);
       if (kind === "mcp") return join(homeDir(ctx), "config.toml");
       if (kind === "instruction") return instructionPath(ctx);
       return skillsDir(ctx);
     },
 
     async materialize(input: MaterializeInput): Promise<MaterializeOutput> {
+      contexts.capture(input.ctx);
       const dir = skillsDir(input.ctx);
       await ensureDir(dir);
       return materializeToDir(dir, input);
     },
 
     async currentHash(name: string, ctx: TargetContext): Promise<string | undefined> {
+      contexts.capture(ctx);
       return installedHash(skillsDir(ctx), name);
     },
 
@@ -138,6 +171,7 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
     },
 
     async writeMcpServers(input: McpWriteInput): Promise<McpWriteOutput> {
+      contexts.capture(input.ctx);
       const path = join(homeDir(input.ctx), "config.toml");
 
       if (mcpMode === "sdk-config") {
@@ -175,6 +209,7 @@ export const codexTarget = (options: CodexTargetOptions = {}): CodexTarget => {
     },
 
     async writeInstructions(input: InstructionWriteInput): Promise<InstructionWriteOutput> {
+      contexts.capture(input.ctx);
       return writeInstructionFile(instructionPath(input.ctx), input);
     },
 

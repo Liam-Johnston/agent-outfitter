@@ -1,7 +1,7 @@
 {
   "name": "agent-outfitter",
   "version": "0.1.0",
-  "description": "Library-first agent package manager: resolve, verify, and install agent primitives — skills, MCP servers, and instruction fragments — into Claude Code, Codex, or any harness, from an await-able TypeScript API.",
+  "description": "Library-first agent package manager: resolve, verify, and install agent primitives \u2014 skills, MCP servers, and instruction fragments \u2014 into Claude Code, Codex, or any harness, from an await-able TypeScript API.",
   "keywords": [
     "agent",
     "agents",
@@ -46,6 +46,7 @@
     "clean": "rm -rf dist",
     "lint": "oxlint --deny-warnings",
     "typecheck": "tsc --noEmit",
+    "typecheck:smoke": "tsc -p smoke/tsconfig.json",
     "test": "bun test",
     "release": "changeset publish",
     "version": "changeset version",

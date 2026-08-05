@@ -1,0 +1,35 @@
+{
+  // The smoke app is typechecked separately from `src`, because it imports
+  // `agent-outfitter` as a *consumer* would rather than by relative path. The
+  // path mapping below stands in for the published package, so `make check` can
+  // validate the example without a build step or an install into the container.
+  //
+  // This matters more than it would for ordinary test code: `app/harness/*.ts` is
+  // documentation people are invited to copy, and Bun strips types without
+  // checking them — so nothing else in the pipeline would notice an example that
+  // does not compile.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": ["node", "bun"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // The app runs under Bun, which resolves `./foo.ts` directly.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    // Relative to this file; TypeScript 7 removed `baseUrl`.
+    "paths": {
+      "agent-outfitter": ["../src/index.ts"]
+    }
+  },
+  "include": ["app/**/*.ts"]
+}

@@ -748,6 +748,7 @@ class AgentManagerImpl implements AgentManager {
         const token = await this.tokenForLockedSource(source);
         const treeRoot = await provider.materializeTree(source, entry.commit, {
           cacheDir: this.cacheDir,
+          onRetry: (info) => this.emit({ type: "source:retry", source, ...info }),
           ...(token ? { token } : {}),
         });
         // The lockfile's subdir is relative to the repo root; a local source
@@ -819,6 +820,7 @@ class AgentManagerImpl implements AgentManager {
       const token = await this.tokenForLockedSource(source);
       const treeRoot = await provider.materializeTree(source, entry.commit, {
         cacheDir: this.cacheDir,
+        onRetry: (info) => this.emit({ type: "source:retry", source, ...info }),
         ...(token ? { token } : {}),
       });
       // `subdir` is relative to the tree root for git, and to the configured

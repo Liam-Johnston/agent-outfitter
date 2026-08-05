@@ -42,6 +42,15 @@
       "rules": {
         "no-console": "off"
       }
+    },
+    {
+      // The container smoke test is a standalone application whose output *is*
+      // its result. `no-console` stays on for src, where the library must report
+      // through `onEvent` rather than couple itself to a stream.
+      "files": ["smoke/**/*.ts"],
+      "rules": {
+        "no-console": "off"
+      }
     }
   ]
 }

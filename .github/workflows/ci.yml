@@ -19,6 +19,10 @@ jobs:
 
       - run: bun run lint
       - run: bun run typecheck
+      # `smoke/app/harness/*.ts` is documentation consumers are invited to copy,
+      # and Bun strips types without checking them — so without this an example
+      # that does not compile would still pass CI.
+      - run: bun run typecheck:smoke
       - run: bun test
       - run: bun run build
 
@@ -42,3 +46,71 @@ jobs:
       # catches a d.ts that only compiles inside this repo's tsconfig.
       - name: Verify the published types resolve for a consumer
         run: bun run verify:types
+
+  # Install into a fresh container from the packed tarball, over the real
+  # network, and check that the harness can see the result. This is the coverage
+  # `build` structurally cannot provide: it runs against `local:` sources inside
+  # one process, so nothing there exercises the published package resolving as a
+  # dependency, a live host pinning a ref to a commit, or the SDK handoff pointing
+  # where the install actually wrote.
+  #
+  # A separate job rather than a step in `build`, so the fast checks are not held
+  # behind a Docker build, and one matrix entry per harness so the two run in
+  # parallel and a failure names which harness broke.
+  smoke:
+    runs-on: ubuntu-latest
+    # The token is passed only to lift the anonymous API rate limit while
+    # resolving public refs, so read access is all it needs.
+    permissions:
+      contents: read
+    strategy:
+      # Report both harnesses even when one fails — "Codex passed, Claude did not"
+      # localizes the problem far faster than a single cancelled run.
+      fail-fast: false
+      matrix:
+        harness: [codex, claude]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Layer cache keyed on the lockfile and sources: the two matrix entries
+      # build the same image, and a cache hit turns the second one into a no-op.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the smoke-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: smoke/Dockerfile
+          tags: agent-outfitter-smoke:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The container runs as the runner's uid so the output is readable by the
+      # artifact step below; on Linux there is no ownership remapping, and root
+      # would leave files the runner can neither upload nor delete.
+      - name: Run the smoke test
+        run: |
+          mkdir -p test-output/${{ matrix.harness }}
+          SMOKE_UID="$(id -u)" SMOKE_GID="$(id -g)" \
+            docker compose -f smoke/docker-compose.yml run --rm ${{ matrix.harness }}
+        env:
+          # Lifts the anonymous GitHub API rate limit, which a shared runner IP
+          # hits readily. Read-only; the smoke test only resolves public refs.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Uploaded on failure too — the installed tree is the evidence for why an
+      # assertion failed, and it is gone once the runner is recycled.
+      - name: Upload the installed tree
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-output-${{ matrix.harness }}
+          path: test-output/${{ matrix.harness }}
+          # Required, not optional: almost everything installed lives under
+          # `.codex/` or `.claude/`, and this action excludes dotted paths by
+          # default — without it the artifact would quietly contain only the
+          # lockfile.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
