@@ -1,0 +1,55 @@
+# One image, two harnesses.
+#
+# The same application code runs against both targets, differing only by
+# HARNESS — which is the property worth proving. If outfitting Codex and
+# outfitting Claude Code needed different wrapper code, the target abstraction
+# would not be earning its place.
+#
+# Each service bind-mounts its own output directory, so everything the install
+# writes survives the container and can be inspected from the host. Only
+# `/workspace/out` is mounted: the application and its `node_modules` live
+# elsewhere in `/workspace` and must not be shadowed.
+#
+# No install location is configured anywhere — `/workspace/out` is both HOME and
+# the working directory in the image, so the library's default paths land there on
+# their own. That is what makes the output representative of what someone gets
+# when they pass nothing.
+
+name: agent-outfitter-smoke
+
+x-common: &common
+  build:
+    context: ..
+    dockerfile: smoke/Dockerfile
+  image: agent-outfitter-smoke:latest
+  # Run as the invoking user so bind-mounted output is owned by them rather than
+  # by root. Defaults to root when unset, which is only what happens if compose is
+  # driven directly instead of through the Makefile.
+  user: "${SMOKE_UID:-0}:${SMOKE_GID:-0}"
+  environment: &common-env
+    # Referenced by name in every generated config file; the value is only ever
+    # resolved in-process, for the SDK handoff.
+    GITHUB_MCP_TOKEN: smoke-secret-value
+    # Optional: a token lifts the anonymous GitHub API rate limit, which a busy
+    # CI runner can otherwise hit.
+    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+services:
+  codex:
+    <<: *common
+    environment:
+      <<: *common-env
+      HARNESS: codex
+      # Only so the run can print host-resolvable paths at the end.
+      HOST_OUTPUT_DIR: ./test-output/codex
+    volumes:
+      - ../test-output/codex:/workspace/out
+
+  claude:
+    <<: *common
+    environment:
+      <<: *common-env
+      HARNESS: claude
+      HOST_OUTPUT_DIR: ./test-output/claude
+    volumes:
+      - ../test-output/claude:/workspace/out

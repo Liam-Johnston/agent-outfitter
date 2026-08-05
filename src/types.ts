@@ -255,6 +255,15 @@ export type OutfitterEvent =
       instructions: number;
       warnings: number;
     }
+  | {
+      /** A transient network failure is being retried. Purely informational. */
+      type: "source:retry";
+      source: PrimitiveSource;
+      attempt: number;
+      of: number;
+      delayMs: number;
+      reason: string;
+    }
   | { type: "skill:fetched"; name: string; commit: string; stagedDir: string }
   | { type: "skill:verified"; name: string; contentHash: string }
   | { type: "skill:materialized"; name: string; target: string; path: string }

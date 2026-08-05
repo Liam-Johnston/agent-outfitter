@@ -248,13 +248,63 @@ Install to several at once (`targets: [codex, claude]`); each gets its own
 **Skills need no config; MCP and instructions do.** Both Codex and Claude Code auto-discover
 skills from their skill directories — dropping the folder in *is* the whole install. Files are
 touched only for the primitives that are not auto-discovered, so a manifest with no `mcp` and
-no `instructions` writes zero config. One caveat: the Claude **Agent SDK** (unlike the Claude
-Code app) does not read filesystem skills unless you pass `settingSources: ['project']` or
-load them via `plugins`. Set `consumer: "agent-sdk"` and agent-outfitter warns you.
+no `instructions` writes zero config.
 
 For Codex you can skip `config.toml` entirely: `codexTarget({ mcpMode: "sdk-config" })` writes
 no file and instead exposes the entries on `target.mcpConfigOverrides`, ready for
 `@openai/codex-sdk`'s `config` option.
+
+### SDK handoff
+
+The harness *apps* find their own skills. An **SDK running in your process** does not
+always: the Claude Agent SDK reads no filesystem skills unless you pass `settingSources`
+or `plugins`, and Codex needs to be pointed at the `CODEX_HOME` you installed into. That
+gap is where a successful install turns into an agent that starts cleanly and silently
+knows nothing.
+
+`sdkOptions()` closes it. The target computed those paths to write to them, so it hands
+the same ones back:
+
+```ts
+import { Codex } from "@openai/codex-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { createAgentManager, claudeTarget, codexTarget } from "agent-outfitter";
+
+const codexT = codexTarget({ codexHome: "/workspace/.codex-home", scope: "user" });
+const claudeT = claudeTarget({ dir: "/workspace/project", consumer: "agent-sdk" });
+
+const outfitter = createAgentManager({ targets: [codexT, claudeT] });
+await outfitter.install();
+
+// Codex: CODEX_HOME plus the MCP entries, in Codex's own config shape.
+const codexSdk = codexT.sdkOptions();
+const codex = new Codex({ env: { ...process.env, ...codexSdk.env }, config: codexSdk.config });
+
+// Claude: settingSources — the option whose absence loads no skills at all.
+for await (const message of query({ prompt, options: { ...claudeT.sdkOptions() } })) { … }
+```
+
+Call it after `install()` or `sync()`; the MCP entries are populated by the install. It
+resolves paths against the context that install ran under, so it needs no arguments.
+
+| | `codexTarget().sdkOptions()` | `claudeTarget().sdkOptions()` |
+|---|---|---|
+| Points the harness at the install | `env.CODEX_HOME` | `settingSources`, or `plugins` in `mode: "plugin"` |
+| MCP servers | `config.mcp_servers` | `mcpServers` |
+| Project anchor | — | `cwd` |
+| Informational | `skillsDir`, `instructionPath` | `skillsDir`, `instructionPath` |
+
+**One asymmetry worth knowing.** Files on disk keep secrets as env-var *names* —
+`.mcp.json` gets `${GITHUB_MCP_TOKEN}`, which Claude Code expands when it reads the file.
+Nothing performs that expansion on an in-process options object, so a placeholder there
+would arrive at the SDK as a broken credential. `sdkOptions().mcpServers` therefore
+carries **resolved values**: hand it to the SDK, and don't log it or write it anywhere. A
+referenced variable that is unset is reported as a warning at install time rather than
+becoming an opaque `401` on the agent's first tool call.
+
+`consumer: "agent-sdk"` additionally warns at install time, because the failure it guards
+against is silent — an SDK built without these options runs happily and never loads a
+skill.
 
 ### Custom targets
 
@@ -370,6 +420,60 @@ hash is an ordinary upgrade and just updates the lockfile. The **same** commit h
 differently means the bytes behind an immutable identifier moved — the signature of a tampered
 mirror — and raises `HashMismatchError`. `sync()` enforces the lockfile outright.
 
+## Ephemeral environments
+
+A container that spins up for a single task, outfits an agent, and exits is the case the
+library is shaped for: `resolve()` and `install()` are the two halves of exactly that
+startup, and `sdkOptions()` is how the result reaches the SDK you then construct.
+
+Two things follow from a container being *fresh*:
+
+**The cache is cold, so every fetch is live.** There is no warm tree to fall back on and
+no second attempt from a human watching a terminal, so transient network failures are
+retried: three attempts with jittered exponential backoff, on 5xx, 429, 408, 425, and
+transport-level errors. A 401, 403, or 404 is *not* retried — a bad token or a wrong ref
+will still be bad three seconds later, and retrying only delays a clear error. Retries
+surface as `source:retry` events.
+
+**Paths must be explicit, not inherited.** `AGENT_OUTFITTER_CACHE_DIR` overrides the cache
+location, which otherwise sits under `$HOME`. Pin it in the image: a container that builds
+as one user and runs as another will otherwise warm a cache in one place and read from
+another, and `$HOME` is the variable most likely to differ between the two.
+
+```ts
+// Container entrypoint, in-process.
+const target = claudeTarget({ dir: "/workspace/project", consumer: "agent-sdk" });
+const outfitter = createAgentManager({
+  root: "/workspace/project",
+  targets: [target],
+  manifest: {
+    version: 1,
+    sources: [{ ref: "github:anthropics/skills#main", select: ["pdf", "xlsx"] }],
+    mcp: [{ name: "github", transport: "http", url: "…", auth: { bearerEnv: "GH_MCP" } }],
+  },
+  onEvent: (e) => {
+    if (e.type === "source:retry") log.warn({ attempt: e.attempt }, "retrying source");
+  },
+});
+
+await outfitter.install();
+for await (const m of query({ prompt, options: { ...target.sdkOptions() } })) { … }
+```
+
+If you commit a lockfile, prefer `sync()`: it resolves nothing, reads pinned commits
+straight from the lockfile, and never touches a host's ref API — so a warm cache baked into
+an image layer makes it a zero-network install.
+
+`smoke/` holds a container test of all of this against the real network, one image per
+harness, installing into the library's *default* locations and bind-mounting the result
+to `test-output/` so it can be inspected from the host — see
+[smoke/README.md](smoke/README.md), or run `make smoke`.
+
+Its `smoke/app/harness/{codex,claude}.ts` are also the worked examples for each harness:
+one self-contained `setupCodex()` / `setupClaude()` apiece, covering manifest through
+install through SDK handoff, with no test scaffolding mixed in and no local imports to
+follow. They are typechecked in CI, so they compile against the library as shipped.
+
 ## Security
 
 Skills ship code that runs in the agent's environment and instructions shape what the agent
@@ -389,15 +493,17 @@ believes, so provenance is a first-class concern rather than a lint:
 - **No implicit exec** — agent-outfitter only places files and merges text. The agent runtime
   executes what it finds under its own sandbox and approval policy.
 - **Secrets by reference** — tokens come from env-var *names*, never values, and never enter a
-  manifest, a lockfile, a generated config, or a log line.
+  manifest, a lockfile, a generated config, or a log line. The one deliberate exception is
+  `sdkOptions().mcpServers`, which must carry values because nothing downstream would expand
+  a placeholder; see [SDK handoff](#sdk-handoff).
 
 ## Events
 
 `onEvent` receives a discriminated union — `resolve:start`, `source:listed`, `resolve:done`,
-`skill:fetched`, `skill:verified`, `skill:materialized`, `skill:skipped`, `skill:removed`,
-`mcp:configured`, `instruction:written`, `instruction:removed`, `lockfile:written`,
-`install:done`, and `warning`. Enough for a progress UI, an audit log, or CI annotations, with
-no `console` coupling.
+`source:retry`, `skill:fetched`, `skill:verified`, `skill:materialized`, `skill:skipped`,
+`skill:removed`, `mcp:configured`, `instruction:written`, `instruction:removed`,
+`lockfile:written`, `install:done`, and `warning`. Enough for a progress UI, an audit log, or
+CI annotations, with no `console` coupling.
 
 ## Errors
 
@@ -409,16 +515,22 @@ no `console` coupling.
 ## Development
 
 ```sh
-bun install
-bun test          # 166 tests, no network required
-bun run typecheck
-bun run lint
-bun run build     # dist/index.js + .d.ts
+make install
+make check        # typecheck + lint + 190 tests, no network required
+make build        # dist/index.js + .d.ts
+make smoke        # container test, both harnesses — needs Docker and network
 ```
 
 Tests use `local:` sources throughout, so the whole resolve → verify → materialize → lockfile
 loop is covered offline. A fixture `SourceProvider` stands in for a git host where
-commit-pinning behaviour is under test.
+commit-pinning behaviour is under test, and `globalThis.fetch` is stubbed where retry
+behaviour is.
+
+What that leaves uncovered is deliberate, and is what `make smoke` exists for: the published
+package resolving in a clean container, real sources over the real network, and the SDK
+handoff pointing where the install actually wrote. `make check` needs no network; `make
+smoke` needs Docker and one. CI runs both — the smoke test as its own job, one harness per
+matrix entry in parallel, uploading the installed tree as an artifact.
 
 Releases go through Changesets and npm Trusted Publishing (OIDC) — no long-lived `NPM_TOKEN`,
 provenance attached automatically. Add a changeset with `bun run changeset`.

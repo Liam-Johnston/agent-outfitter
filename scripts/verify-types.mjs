@@ -50,7 +50,7 @@ import {
 } from "agent-outfitter";
 import type {
   AgentTarget, OutfitterEvent, Resolution, InstallResult, TrustPolicy, InstalledPrimitive,
-  ResolvedInstruction, PrimitiveKind,
+  ResolvedInstruction, PrimitiveKind, ClaudeSdkOptions, CodexSdkOptions,
 } from "agent-outfitter";
 
 const custom: AgentTarget = {
@@ -97,9 +97,25 @@ void new HashMismatchError("a", "b", "c").expected;
 void defineConfig({ version: 1, sources: ["local:./s"], instructions: ["local:./i"], targets: [custom] });
 void openaiHostedTarget({ upload: async () => ({ skillId: "sk_1" }) }).supports;
 
+// The SDK handoff, spread into constructor options the way a wrapper does. This
+// is the surface an in-process consumer touches, so its shape has to survive the
+// trip through the published declarations.
+const codexT = codexTarget({ codexHome: "/tmp/c" });
+const claudeT = claudeTarget({ dir: "/tmp/p", consumer: "agent-sdk" });
+const codexSdk: CodexSdkOptions = codexT.sdkOptions();
+const claudeSdk: ClaudeSdkOptions = claudeT.sdkOptions();
+void ({ env: { ...process.env, ...codexSdk.env }, config: codexSdk.config });
+void ({ settingSources: claudeSdk.settingSources, mcpServers: claudeSdk.mcpServers, cwd: claudeSdk.cwd });
+const ghServer = claudeSdk.mcpServers.github;
+if (ghServer && ghServer.type === "http") void ghServer.headers;
+void claudeSdk.plugins?.map((p) => p.path);
+void ((e2: OutfitterEvent) => (e2.type === "source:retry" ? e2.delayMs : 0));
+
 // @ts-expect-error - an invalid policy value must not typecheck
 const bad: TrustPolicy = { scripts: "sometimes" };
 void bad;
+// @ts-expect-error - a stdio entry has no url, so the union must discriminate
+void (claudeSdk.mcpServers.x?.type === "stdio" ? claudeSdk.mcpServers.x.url : "");
 // @ts-expect-error - resolveDir requires a kind argument
 void custom.resolveDir({ root: "", cacheDir: "", emit: () => {}, warn: () => {} });
 `,

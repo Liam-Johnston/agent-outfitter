@@ -49,8 +49,6 @@ export interface ResolverOptions {
   auth?: AuthResolver;
   emit: EventSink;
   concurrency?: number;
-  /** Skip the network and use only already-cached trees. */
-  offline?: boolean;
 }
 
 interface QueueItem {
@@ -111,14 +109,23 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     const provider = selectProvider(ref.source, providers);
     const key = sourceKey(ref.source);
 
+    const onRetry = (info: {
+      attempt: number;
+      of: number;
+      delayMs: number;
+      reason: string;
+    }): void => {
+      emit({ type: "source:retry", source: ref.source, ...info });
+    };
+
     let revisionPromise = revisions.get(key);
     if (!revisionPromise) {
       revisionPromise = (async () => {
         const token = await tokenFor(ref.source);
         return provider.resolveRevision(ref.source, {
           cacheDir,
+          onRetry,
           ...(token ? { token } : {}),
-          ...(options.offline ? { useCache: true } : {}),
         });
       })();
       revisions.set(key, revisionPromise);
@@ -132,6 +139,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
         const token = await tokenFor(ref.source);
         return provider.materializeTree(ref.source, revision, {
           cacheDir,
+          onRetry,
           ...(token ? { token } : {}),
         });
       })();

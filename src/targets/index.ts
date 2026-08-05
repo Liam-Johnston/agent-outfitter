@@ -17,13 +17,22 @@ export {
   type OpenAiLikeClient,
 } from "./openai-hosted.js";
 export {
+  createContextCapture,
   installedHash,
   materializeToDir,
   removeInstructionsFromFile,
   resolveAgainstRoot,
   unmaterializeFromDir,
   writeInstructionFile,
+  type ContextCapture,
 } from "./base.js";
+export {
+  toClaudeSdkMcpEntry,
+  toClaudeSdkMcpServers,
+  type ClaudeSdkMcpServer,
+  type ClaudeSdkOptions,
+  type CodexSdkOptions,
+} from "./sdk.js";
 export {
   mergeCodexToml,
   mergeMcpJson,

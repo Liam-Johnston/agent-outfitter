@@ -14,6 +14,7 @@ import {
   replaceDirAtomic,
   restoreExecBits,
 } from "../fsutil.js";
+import { defaultCacheDir } from "../paths.js";
 import { mergeInstructions } from "../primitives/instruction.js";
 import { readIfExists, writeConfigIfChanged } from "./mcp-config.js";
 import type {
@@ -108,4 +109,38 @@ export const removeInstructionsFromFile = async (
 export const resolveAgainstRoot = (ctx: TargetContext, path: string): string => {
   const expanded = expandTilde(path);
   return isAbsolute(expanded) ? expanded : resolve(ctx.root, expanded);
+};
+
+export interface ContextCapture {
+  /** Record the context the manager just handed this target. */
+  capture(ctx: TargetContext): void;
+  /** The context to resolve paths against: explicit, else last seen, else a default. */
+  resolve(override?: TargetContext): TargetContext;
+}
+
+/**
+ * Remembers the `TargetContext` a target last ran under.
+ *
+ * `sdkOptions()` must resolve the same paths the install resolved, and those
+ * depend on the manager's root — which the caller of `sdkOptions()` has no
+ * reason to reconstruct by hand. So each target records the context the manager
+ * gave it and reuses that. The fallback applies only when `sdkOptions()` is
+ * called before any install has run, and uses the same `cwd` default the manager
+ * itself would have picked, so the two cannot disagree.
+ */
+export const createContextCapture = (): ContextCapture => {
+  let last: TargetContext | undefined;
+  return {
+    capture: (ctx) => {
+      last = ctx;
+    },
+    resolve: (override) =>
+      override ??
+      last ?? {
+        root: process.cwd(),
+        cacheDir: defaultCacheDir(),
+        emit: () => {},
+        warn: () => {},
+      },
+  };
 };
