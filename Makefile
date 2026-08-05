@@ -8,7 +8,7 @@ COMPOSE := docker compose -f smoke/docker-compose.yml
 OUT_DIR := test-output
 
 # The containers run as the invoking user, so what lands in OUT_DIR is owned by
-# them. Without this the output is root-owned on Linux — unreadable to a CI
+# them. Without this the output is root-owned on Linux, unreadable to a CI
 # artifact step and undeletable by the runner.
 export SMOKE_UID := $(shell id -u)
 export SMOKE_GID := $(shell id -g)
@@ -52,7 +52,7 @@ smoke-build: ## Build the smoke-test image
 	$(COMPOSE) build
 
 # Created on the host before the mount exists, so the directory belongs to the
-# invoking user. Left to Docker, it would be created by the daemon instead — root
+# invoking user. Left to Docker, it would be created by the daemon instead: root
 # on Linux, which then needs sudo to clean up.
 $(OUT_DIR)/%:
 	mkdir -p $@
@@ -66,7 +66,7 @@ smoke-claude: smoke-build $(OUT_DIR)/claude ## Smoke-test the Claude target in a
 smoke: smoke-codex smoke-claude ## Smoke-test both harnesses
 
 smoke-output: ## Show what the last smoke run left behind
-	@test -d $(OUT_DIR) || { echo "no $(OUT_DIR)/ — run 'make smoke' first"; exit 1; }
+	@test -d $(OUT_DIR) || { echo "no $(OUT_DIR)/. Run 'make smoke' first"; exit 1; }
 	@find $(OUT_DIR) -type f | sort
 
 smoke-clean: ## Remove smoke-test containers, images, and output

@@ -50,7 +50,7 @@ export const matchesAny = (value: string, patterns: readonly string[] | undefine
   return patterns.some((p) => globToRegExp(p).test(value));
 };
 
-/** Patterns that matched nothing — used to turn typos into `SkillNotFoundError`s. */
+/** Patterns that matched nothing, used to turn typos into `SkillNotFoundError`s. */
 export const unmatchedPatterns = (
   values: readonly string[],
   patterns: readonly string[] | undefined,

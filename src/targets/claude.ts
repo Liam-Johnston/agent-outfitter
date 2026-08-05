@@ -1,11 +1,11 @@
 /**
  * Claude target.
  *
- * Claude Code auto-discovers skills under `.claude/skills` — dropping the folder
+ * Claude Code auto-discovers skills under `.claude/skills`: dropping the folder
  * in is the whole install. The Claude *Agent SDK* is the exception: it only
  * reads filesystem skills when `settingSources` is set (or when they arrive as
  * a plugin). So `sdkOptions()` returns exactly that configuration, computed from
- * the same paths this target installed into — the wiring most likely to be got
+ * the same paths this target installed into. The wiring most likely to be got
  * wrong is the wiring you no longer have to write.
  */
 
@@ -57,8 +57,8 @@ export interface ClaudeTargetOptions {
   scope?: "project" | "user";
   /**
    * Which Claude surface will read these skills. `"agent-sdk"` adds a warning
-   * reminding the caller to set `settingSources`, since the SDK — unlike the
-   * Claude Code app — does not read filesystem skills by default.
+   * reminding the caller to set `settingSources`, since the SDK, unlike the
+   * Claude Code app, does not read filesystem skills by default.
    */
   consumer?: "code" | "agent-sdk";
   /** Instruction file Claude reads. Default `CLAUDE.md`. */
@@ -74,7 +74,7 @@ export interface ClaudeTarget extends AgentTarget {
   instructionPath(ctx: TargetContext): string;
   /**
    * Everything the Claude Agent SDK needs to actually see what this target
-   * installed — most importantly `settingSources`, without which the SDK loads
+   * installed, most importantly `settingSources`, without which the SDK loads
    * no filesystem skills at all.
    *
    * ```ts
@@ -86,7 +86,7 @@ export interface ClaudeTarget extends AgentTarget {
    * install. The context defaults to the one the last install ran under.
    *
    * The returned `mcpServers` has env references resolved to **real values**, so
-   * it may carry secrets — hand it to the SDK, do not log it. Claude Code
+   * it may carry secrets: hand it to the SDK, do not log it. Claude Code
    * (`consumer: "code"`) needs none of this and reads the files directly.
    */
   sdkOptions(ctx?: TargetContext): ClaudeSdkOptions;
@@ -175,7 +175,7 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       subject: "claude",
       message:
         `Skills were written to ${dir}, but the Claude Agent SDK does not load filesystem ` +
-        `skills by default — you must ${how}. Spread this target's sdkOptions() into the ` +
+        `skills by default; you must ${how}. Spread this target's sdkOptions() into the ` +
         `query() options to get that wiring, and its MCP servers, without hand-building it. ` +
         `Claude Code itself needs no configuration.`,
       detail: { dir, consumer, mode },
@@ -183,7 +183,7 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
   };
 
   /**
-   * `CLAUDE.md` sits at the project root, where Claude Code looks — not inside
+   * `CLAUDE.md` sits at the project root, where Claude Code looks, not inside
    * `.claude/`. User scope puts it in the Claude config dir instead.
    */
   const instructionPath = (ctx: TargetContext): string => {
@@ -254,7 +254,7 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       registered = input.servers.map((s) => ({ name: s.name, server: s.server }));
 
       // Resolving env references is what `sdkOptions()` will do, so surface a
-      // missing variable now — while there is still a live warning sink — rather
+      // missing variable now (while there is still a live warning sink) rather
       // than letting it become an opaque auth failure at the first tool call.
       if (consumer === "agent-sdk") {
         const { warnings } = toClaudeSdkMcpServers(registered);

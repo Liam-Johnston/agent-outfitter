@@ -2,7 +2,7 @@
  * Typecheck a synthetic consumer against the built declarations.
  *
  * Resolution goes through package.json "exports", the way a real dependent
- * resolves types — which catches a .d.ts that only happens to compile inside
+ * resolves types, which catches a .d.ts that only happens to compile inside
  * this repo's own tsconfig.
  */
 

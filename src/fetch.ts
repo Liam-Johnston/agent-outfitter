@@ -68,7 +68,7 @@ const backoffMs = (attempt: number): number =>
  * Whether a failed HTTP status is worth a second attempt.
  *
  * Deliberately narrow. A 5xx or a 429 says "not now"; a 401, 403, or 404 says
- * "not ever with these inputs", and retrying it only delays a clear error — the
+ * "not ever with these inputs", and retrying it only delays a clear error, since the
  * caller has a token or a ref to fix. 408 and 425 are timing failures the server
  * itself invites you to repeat.
  */
@@ -237,7 +237,7 @@ const commitFromApi = async (
       headers,
     });
   } catch {
-    return {}; // Network failure that outlived the retries — let smart-HTTP try.
+    return {}; // Network failure that outlived the retries; let smart-HTTP try.
   }
   if (!response) return {};
   if (isAuthFailure(response.status)) return { authFailed: true };
@@ -397,7 +397,7 @@ export const repoCachePath = (
 
 /**
  * Marker for a completed extraction, kept *beside* the tree rather than inside
- * it — a repo root can itself be a skill folder, and the marker must never end
+ * it: a repo root can itself be a skill folder, and the marker must never end
  * up in a skill's file list or content hash.
  */
 const cacheSentinelPath = (dest: string): string => `${dest}.complete`;
@@ -446,7 +446,7 @@ export const fetchRepoTree = async (
   /**
    * The tarball download is the largest and longest request in the pipeline, so
    * it is also the one most likely to be cut short. A failed attempt may have
-   * left a partial extraction, which must be cleared before the next one — the
+   * left a partial extraction, which must be cleared before the next one. The
    * sentinel is only written on success, so a leftover tree is never *reused*,
    * but `downloadTemplate` still needs a clean directory to write into.
    */

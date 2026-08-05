@@ -86,7 +86,7 @@ describe("claudeTarget.sdkOptions", () => {
       const sdk = target.sdkOptions();
       expect(sdk.settingSources).toEqual(["user"]);
       expect(sdk.skillsDir).toBe(join(configDir, "skills"));
-      // `cwd` anchors "project", so it is meaningless — and absent — here.
+      // `cwd` anchors "project", so it is meaningless (and absent) here.
       expect(sdk.cwd).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;

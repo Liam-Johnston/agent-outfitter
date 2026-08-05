@@ -1,7 +1,7 @@
 /**
  * Container smoke test.
  *
- * The outfitting itself lives in `harness/codex.ts` and `harness/claude.ts` —
+ * The outfitting itself lives in `harness/codex.ts` and `harness/claude.ts`,
  * each self-contained, each a file a consumer can copy whole. This one only drives
  * them and checks the result. Keeping the split strict is deliberate: an example
  * carrying test scaffolding is an example nobody can lift cleanly, and assertions
@@ -52,7 +52,7 @@ const HARNESS = process.env.HARNESS ?? "codex";
 
 /**
  * Neither harness file passes an install location, so every path comes from the
- * library's own defaults — `$HOME/.codex` for Codex, the working directory for
+ * library's own defaults: `$HOME/.codex` for Codex, the working directory for
  * Claude. Steering the *output* is done by pointing `HOME` and the working
  * directory at the bind mount in the Dockerfile, not by passing arguments, so the
  * default resolution logic is the thing under test rather than being bypassed.
@@ -106,16 +106,16 @@ const EXPECTED =
  * Clear the output directory before installing.
  *
  * A bind-mounted directory outlives the container, and a skill whose hash still
- * matches is skipped rather than rewritten — so leftovers from a previous run
+ * matches is skipped rather than rewritten, so leftovers from a previous run
  * would turn the first install into a no-op and make the assertions below
  * describe the *last* run instead of this one. The mount point's contents are
  * removed rather than the directory itself, which cannot be unlinked.
  *
  * `KEEP_OUTPUT=1` skips this, which is how a deliberately dirty starting state is
- * staged to confirm an assertion can actually fail — see the README.
+ * staged to confirm an assertion can actually fail. See the README.
  */
 if (process.env.KEEP_OUTPUT === "1") {
-  console.log("  KEEP_OUTPUT=1 — not clearing the output directory");
+  console.log("  KEEP_OUTPUT=1: not clearing the output directory");
 } else {
   for (const entry of await readdir(OUTPUT_DIR)) {
     await rm(join(OUTPUT_DIR, entry), { recursive: true, force: true });
@@ -139,7 +139,7 @@ await writeFile(EXPECTED.instructionPath, HAND_WRITTEN);
 // Run the example
 // ---------------------------------------------------------------------------
 
-console.log(`agent-outfitter smoke test — harness: ${HARNESS}`);
+console.log(`agent-outfitter smoke test (harness: ${HARNESS})`);
 console.log(`  default paths, nothing configured:`);
 console.log(`    HOME:  ${homedir()}`);
 console.log(`    cwd:   ${OUTPUT_DIR}`);
@@ -233,7 +233,7 @@ await printFiles("Configuration and instructions", [
  * This is what turns the printout from a claim into evidence. The lockfile
  * records the file list each skill was hashed over, so a disagreement between it
  * and the directory means either the install dropped something or wrote something
- * it does not account for — and in both cases the content hash guarding the tree
+ * it does not account for, and in both cases the content hash guarding the tree
  * describes a tree that is not the one on disk.
  */
 section("Inventory reconciliation");

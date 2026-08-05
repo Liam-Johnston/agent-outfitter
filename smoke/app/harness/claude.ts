@@ -1,5 +1,5 @@
 /**
- * Outfitting Claude — a complete, self-contained example.
+ * Outfitting Claude: a complete, self-contained example.
  *
  * ```ts
  * import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -13,13 +13,13 @@
  * ```
  *
  * **Spreading `sdk` is not optional for the Agent SDK.** Unlike the Claude Code
- * app, it loads no filesystem skills unless `settingSources` is set — so an SDK
+ * app, it loads no filesystem skills unless `settingSources` is set, so an SDK
  * built without it starts cleanly and silently knows nothing about anything that
  * was just installed. That is the easiest thing to get wrong here, and the reason
  * `sdkOptions()` exists rather than leaving you to assemble it by hand.
  *
  * Targeting the Claude Code *app* instead? Pass `consumer: "code"` below and ignore
- * `sdk` entirely — the app reads the files directly and needs no configuration.
+ * `sdk` entirely: the app reads the files directly and needs no configuration.
  *
  * The SDK call is left to the caller because this file is also driven by the smoke
  * test, which asserts on the options rather than starting an agent.
@@ -54,7 +54,7 @@ export interface ClaudeSetup {
 /**
  * Install this project's primitives into Claude and return the SDK wiring.
  *
- * `consumer: "agent-sdk"` is not a path — it tells the target which Claude surface
+ * `consumer: "agent-sdk"` is not a path. It tells the target which Claude surface
  * will read these skills, so `sdkOptions()` returns the right `settingSources` and
  * a warning is raised if the install lands somewhere the SDK would not look.
  * Everything else is a default: skills into `<root>/.claude/skills`, MCP servers
@@ -73,7 +73,7 @@ export const setupClaude = async (options: SetupOptions): Promise<ClaudeSetup> =
       version: 1,
 
       // `#main` is resolved to a commit once, at install time, and that commit is
-      // what the lockfile pins — so the branch moving later does not change what
+      // what the lockfile pins, so the branch moving later does not change what
       // `sync()` installs.
       sources: [{ ref: "github:anthropics/skills#main", select: ["pdf", "xlsx", "mcp-builder"] }],
 
@@ -109,7 +109,7 @@ export const setupClaude = async (options: SetupOptions): Promise<ClaudeSetup> =
         scan: "deny",
         // A skill can declare its own MCP servers and instruction fragments. With
         // these false, anything it tries to add is dropped with a warning instead
-        // of silently attached — which matters most for instructions, since those
+        // of silently attached, which matters most for instructions, since those
         // go straight into the agent's standing context.
         allowTransitiveMcp: false,
         allowTransitiveInstructions: false,

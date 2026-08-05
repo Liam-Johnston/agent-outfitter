@@ -260,7 +260,7 @@ const importConfigModule = async (path: string): Promise<unknown> => {
 // Writing
 // ---------------------------------------------------------------------------
 
-/** Serializable projection of a manifest — drops live target adapters. */
+/** Serializable projection of a manifest. Drops live target adapters. */
 const serializableManifest = (manifest: Manifest): Record<string, unknown> => {
   const out: Record<string, unknown> = { version: manifest.version };
   const targets = (manifest.targets ?? []).filter((t): t is string => typeof t === "string");

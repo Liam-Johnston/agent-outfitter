@@ -4,7 +4,7 @@
  * Deliberately dependency-free: the point of the exercise is to prove that
  * *agent-outfitter* works in a fresh container, so anything else installed
  * alongside it is a variable that could mask or cause a failure. A test runner
- * would also swallow the ordering, and the ordering is the interesting part —
+ * would also swallow the ordering, and the ordering is the interesting part:
  * each check below only means something if the ones before it passed.
  */
 
@@ -64,6 +64,6 @@ export const finish = (harness: string) => {
     process.exit(0);
   }
   console.log(`${RED}FAIL${RESET} ${harness}: ${failed.length} of ${total} checks failed`);
-  for (const f of failed) console.log(`  - ${f.label}${f.detail ? ` — ${f.detail}` : ""}`);
+  for (const f of failed) console.log(`  - ${f.label}${f.detail ? `: ${f.detail}` : ""}`);
   process.exit(1);
 };

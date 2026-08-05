@@ -3,7 +3,7 @@
  *
  * This matters most for a single-task container: the cache is cold by
  * definition, so every fetch is live and a transient 502 has no warm tree to
- * fall back on — it takes the whole task down. The tests below therefore pin
+ * fall back on: it takes the whole task down. The tests below therefore pin
  * both halves of the policy: that a "not now" status is retried, and that a
  * "not ever" status is *not*, since retrying it only delays a clear error.
  *
@@ -90,7 +90,7 @@ describe("resolveCommit retries", () => {
     expect(stub.calls).toHaveLength(2);
   });
 
-  test("does not retry a 404 — the ref is wrong and will stay wrong", async () => {
+  test("does not retry a 404: the ref is wrong and will stay wrong", async () => {
     const stub = stubFetch();
     stub.install(() => new Response("no such ref", { status: 404 }));
 
@@ -99,7 +99,7 @@ describe("resolveCommit retries", () => {
     expect(stub.calls).toHaveLength(2);
   });
 
-  test("does not retry a 401 — a bad token will stay bad", async () => {
+  test("does not retry a 401: a bad token will stay bad", async () => {
     const stub = stubFetch();
     stub.install(() => new Response("denied", { status: 401 }));
 

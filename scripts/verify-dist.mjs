@@ -2,7 +2,7 @@
  * Smoke-check the built package under plain Node.
  *
  * Node validates an ESM module's export list at link time, so importing dist is
- * enough to catch a build that emitted a name it does not actually export — the
+ * enough to catch a build that emitted a name it does not actually export, the
  * failure mode that a bundled build introduced and this check exists to stop.
  * Then it runs one real install, because linking is necessary but not sufficient.
  */

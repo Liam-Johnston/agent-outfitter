@@ -3,7 +3,7 @@
  *
  * A provider turns a `PrimitiveSource` into (a) an immutable revision identifier
  * and (b) a local directory holding that revision's tree. Everything above this
- * layer — discovery, hashing, policy, targets — is source-agnostic, so adding
+ * layer (discovery, hashing, policy, targets) is source-agnostic, so adding
  * an artifact store or a corporate SCM means implementing two methods.
  */
 

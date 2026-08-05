@@ -122,7 +122,7 @@ export interface ContextCapture {
  * Remembers the `TargetContext` a target last ran under.
  *
  * `sdkOptions()` must resolve the same paths the install resolved, and those
- * depend on the manager's root — which the caller of `sdkOptions()` has no
+ * depend on the manager's root, which the caller of `sdkOptions()` has no
  * reason to reconstruct by hand. So each target records the context the manager
  * gave it and reuses that. The fallback applies only when `sdkOptions()` is
  * called before any install has run, and uses the same `cwd` default the manager

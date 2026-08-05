@@ -1,10 +1,10 @@
 /**
- * `AgentManager` — the public entrypoint.
+ * `AgentManager`: the public entrypoint.
  *
  * The split the whole design rests on: `resolve()` reads (network + cache) and
  * returns a plan; everything else acts on that plan. Nothing touches a target
  * until `install()`, `sync()`, `add()`, or `remove()` is called, and none of
- * them run skill code — agent-outfitter places files and merges config, and the
+ * them run skill code. agent-outfitter places files and merges config, and the
  * agent runtime executes whatever it finds under its own sandbox.
  */
 
@@ -72,7 +72,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export interface AgentManagerConfig {
-  /** Working root — where the manifest and lockfile live. Default `process.cwd()`. */
+  /** Working root: where the manifest and lockfile live. Default `process.cwd()`. */
   root?: string;
   /** Manifest path or an inline manifest. Default: probe `<root>/outfitter.config.*`. */
   manifest?: string | Manifest;
@@ -227,7 +227,7 @@ class AgentManagerImpl implements AgentManager {
     if (!chosen || chosen.length === 0) {
       throw new TargetError(
         `No install targets configured. Pass "targets" to createAgentManager(), to the call ` +
-          `itself, or declare them in the manifest — for example ` +
+          `itself, or declare them in the manifest, for example ` +
           `codexTarget({ codexHome }) or claudeTarget({ dir }).`,
       );
     }
@@ -509,7 +509,7 @@ class AgentManagerImpl implements AgentManager {
           code: "manifest",
           message:
             `${orphans.join(", ")} ${orphans.length === 1 ? "is" : "are"} still installed but no ` +
-            `longer resolved from the manifest. Files were left in place — call remove(), or ` +
+            `longer resolved from the manifest. Files were left in place. Call remove(), or ` +
             `install({ prune: true }), to delete them.`,
           detail: { orphans },
         });
@@ -1067,7 +1067,7 @@ class AgentManagerImpl implements AgentManager {
         code: "manifest",
         subject: name,
         message:
-          `No manifest source names "${name}" explicitly — it comes from a source that installs ` +
+          `No manifest source names "${name}" explicitly; it comes from a source that installs ` +
           `everything it finds. The next install() will reinstall it unless you narrow that ` +
           `source's "select".`,
       });

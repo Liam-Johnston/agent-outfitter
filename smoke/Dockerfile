@@ -2,7 +2,7 @@
 #
 # Two stages on purpose. The builder packs the library exactly as `npm publish`
 # would, and the runtime stage installs that tarball into an otherwise empty
-# image — so the test exercises the *published* package surface (its `exports`
+# image, so the test exercises the *published* package surface (its `exports`
 # map, its `files` list, its dependency closure) rather than the source tree it
 # was built from. A packaging mistake that only shows up for a consumer is
 # precisely the kind of failure a fresh container would hit first.
@@ -25,7 +25,7 @@ FROM oven/bun:1 AS runtime
 
 # The smoke test configures no install locations, so every path it writes comes
 # from the library's defaults: `$HOME/.codex` for Codex, the working directory for
-# Claude. Both are steered onto the bind mount by setting HOME and WORKDIR to it —
+# Claude. Both are steered onto the bind mount by setting HOME and WORKDIR to it,
 # which keeps the default resolution logic under test rather than bypassing it
 # with arguments. CODEX_HOME is deliberately *not* set; setting it would override
 # the default being tested.
@@ -33,7 +33,7 @@ FROM oven/bun:1 AS runtime
 # XDG_CACHE_HOME is redirected outside the mount, which keeps both
 # agent-outfitter's tree cache and giget's tarball cache off the host. Left to
 # follow HOME they would land *inside* the mount, persist across runs, and make
-# the "cold cache" the test reports a fiction — besides burying the installed tree
+# the "cold cache" the test reports a fiction, besides burying the installed tree
 # under a cache the reader has to scroll past. Note this is still the default
 # resolution path (`$XDG_CACHE_HOME/agent-outfitter`), not an override of it:
 # AGENT_OUTFITTER_CACHE_DIR is deliberately left unset.
@@ -56,7 +56,7 @@ COPY smoke/instructions ./instructions
 # Both directories are made group- and world-writable because the container is
 # run as the *host* user's uid/gid, so that files landing in the bind mount are
 # owned by whoever invoked it. On Docker Desktop the ownership is remapped and
-# this would not be needed, but on Linux — a CI runner — it is: without it the
+# this would not be needed, but on Linux (a CI runner) it is: without it the
 # output is root-owned and the runner cannot read it into an artifact or delete
 # it afterwards. An arbitrary uid has no entry in /etc/passwd, hence permissive
 # modes rather than a chown to some specific user.

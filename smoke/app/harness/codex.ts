@@ -1,5 +1,5 @@
 /**
- * Outfitting Codex — a complete, self-contained example.
+ * Outfitting Codex: a complete, self-contained example.
  *
  * ```ts
  * import { Codex } from "@openai/codex-sdk";
@@ -7,7 +7,7 @@
  *
  * const { sdk } = await setupCodex({ instructionsDir: "./instructions" });
  *
- * // sdk.env carries CODEX_HOME — where the skills were just installed. Spread it
+ * // sdk.env carries CODEX_HOME, where the skills were just installed. Spread it
  * // over process.env rather than passing it alone; Codex needs PATH and its own
  * // credentials from the ambient environment too.
  * const codex = new Codex({ env: { ...process.env, ...sdk.env }, config: sdk.config });
@@ -64,7 +64,7 @@ export const setupCodex = async (options: SetupOptions): Promise<CodexSetup> => 
       version: 1,
 
       // `#main` is resolved to a commit once, at install time, and that commit is
-      // what the lockfile pins — so the branch moving later does not change what
+      // what the lockfile pins, so the branch moving later does not change what
       // `sync()` installs.
       sources: [{ ref: "github:anthropics/skills#main", select: ["pdf", "xlsx", "mcp-builder"] }],
 
@@ -99,7 +99,7 @@ export const setupCodex = async (options: SetupOptions): Promise<CodexSetup> => 
         scan: "deny",
         // A skill can declare its own MCP servers and instruction fragments. With
         // these false, anything it tries to add is dropped with a warning instead
-        // of silently attached — which matters most for instructions, since those
+        // of silently attached, which matters most for instructions, since those
         // go straight into the agent's standing context.
         allowTransitiveMcp: false,
         allowTransitiveInstructions: false,

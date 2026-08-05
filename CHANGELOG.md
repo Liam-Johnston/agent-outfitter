@@ -17,8 +17,8 @@
   ```
 
   Previously a wrapper application had to re-derive this by hand. For the Claude
-  Agent SDK that meant reconstructing `settingSources` — the option whose absence
-  loads no filesystem skills at all — from a warning message, which is the one
+  Agent SDK that meant reconstructing `settingSources`, the option whose absence
+  loads no filesystem skills at all, from a warning message, which is the one
   failure mode with no visible symptom: the agent starts normally and silently
   knows nothing.
 
@@ -29,7 +29,7 @@
   `instructionPath`.
 
   Note that `sdkOptions().mcpServers` resolves env-var references to **values**,
-  unlike the `${VAR}` placeholders written into `.mcp.json` — nothing expands a
+  unlike the `${VAR}` placeholders written into `.mcp.json`, nothing expands a
   placeholder in an in-process options object, so one would reach the SDK as a
   broken credential. A referenced variable that is unset is now warned about at
   install time instead of surfacing as an opaque auth failure on the agent's first
@@ -48,7 +48,7 @@
   resolver options that never took effect.
 
   Its `smoke/app/harness/{codex,claude}.ts` double as the worked example for each
-  harness — one self-contained `setupCodex()` / `setupClaude()` apiece, manifest
+  harness: one self-contained `setupCodex()` / `setupClaude()` apiece, manifest
   through install through SDK handoff, with the assertions kept out in the test that
   drives them. They are typechecked in CI so a broken example cannot ship.
 
@@ -58,7 +58,7 @@
 
 - 0427c20: Initial release: a library-first agent package manager.
 
-  Provisions **agent primitives** — skills, MCP servers, and instruction fragments —
+  Provisions **agent primitives** (skills, MCP servers, and instruction fragments)
   into agent harnesses, behind an `await`-able TypeScript API rather than a CLI.
 
   - `createAgentManager()` with `resolve`, `install`, `add`, `sync`, `list`, `remove`, `verify`

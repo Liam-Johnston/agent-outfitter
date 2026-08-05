@@ -20,7 +20,7 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       # `smoke/app/harness/*.ts` is documentation consumers are invited to copy,
-      # and Bun strips types without checking them — so without this an example
+      # and Bun strips types without checking them, so without this an example
       # that does not compile would still pass CI.
       - run: bun run typecheck:smoke
       - run: bun test
@@ -64,7 +64,7 @@ jobs:
     permissions:
       contents: read
     strategy:
-      # Report both harnesses even when one fails — "Codex passed, Claude did not"
+      # Report both harnesses even when one fails: "Codex passed, Claude did not"
       # localizes the problem far faster than a single cancelled run.
       fail-fast: false
       matrix:
@@ -99,7 +99,7 @@ jobs:
           # hits readily. Read-only; the smoke test only resolves public refs.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Uploaded on failure too — the installed tree is the evidence for why an
+      # Uploaded on failure too: the installed tree is the evidence for why an
       # assertion failed, and it is gone once the runner is recycled.
       - name: Upload the installed tree
         if: always()
@@ -109,7 +109,7 @@ jobs:
           path: test-output/${{ matrix.harness }}
           # Required, not optional: almost everything installed lives under
           # `.codex/` or `.claude/`, and this action excludes dotted paths by
-          # default — without it the artifact would quietly contain only the
+          # default, and without it the artifact would quietly contain only the
           # lockfile.
           include-hidden-files: true
           if-no-files-found: error
