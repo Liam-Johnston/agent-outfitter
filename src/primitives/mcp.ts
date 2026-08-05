@@ -1,7 +1,7 @@
 /**
  * MCP server primitives.
  *
- * MCP servers are not copied as files — they are *configured* into each target.
+ * MCP servers are not copied as files. They are *configured* into each target.
  * Everything here is shape normalization plus the identity/equality logic the
  * resolver needs to dedupe one logical server declared in several places.
  */
@@ -54,7 +54,7 @@ export const mcpHost = (server: McpServer): string | undefined => {
   }
 };
 
-/** Human-readable one-liner, safe to log — env var *names* only, never values. */
+/** Human-readable one-liner, safe to log: env var *names* only, never values. */
 export const describeMcpServer = (server: McpServer): string =>
   server.transport === "stdio"
     ? `stdio ${[server.command, ...(server.args ?? [])].join(" ")}`

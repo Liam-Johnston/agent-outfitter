@@ -145,7 +145,7 @@ export const parseRefString = (
   }
 
   if (provider === "git") {
-    // `git:https://host/owner/repo.git#ref` — the rest is a URL, possibly with a fragment.
+    // `git:https://host/owner/repo.git#ref`: the rest is a URL, possibly with a fragment.
     const [urlPart, gitRef] = splitRef(rest);
     const source = gitSourceFromUrl(urlPart, options.auth);
     if (gitRef) source.ref = gitRef;
@@ -225,7 +225,7 @@ export const sourceKey = (source: PrimitiveSource): string => {
   return `git:${normalizeGitUrl(source.url)}#${source.ref ?? "HEAD"}`;
 };
 
-/** Human-readable source label — never contains a token. */
+/** Human-readable source label. Never contains a token. */
 export const describeSource = (source: PrimitiveSource): string => {
   if (source.type === "local") return `local:${source.path}`;
   const repo = sourceRepoPath(source) ?? source.url;

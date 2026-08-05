@@ -2,7 +2,7 @@
  * Skill discovery within a materialized source tree.
  *
  * A source may be a single skill folder or a monorepo holding many. Discovery
- * reads only each candidate's `SKILL.md` frontmatter — cheap enough to run over
+ * reads only each candidate's `SKILL.md` frontmatter, cheap enough to run over
  * every folder in a repo before deciding what to install.
  */
 

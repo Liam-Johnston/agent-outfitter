@@ -1,5 +1,5 @@
 /**
- * `outfitter.lock.json` — the reproducibility record.
+ * `outfitter.lock.json`: the reproducibility record.
  *
  * Each skill pins an exact commit plus a content hash over its file tree, so a
  * fresh `sync()` is byte-identical even if the tag it was installed from moves.
@@ -176,7 +176,7 @@ export const lockSourceToPrimitiveSource = (source: LockSkill["source"]): Primit
         ...(source.provider ? { provider: source.provider } : {}),
       };
 
-/** Project a `PrimitiveSource` for storage — drops auth, which never enters the lockfile. */
+/** Project a `PrimitiveSource` for storage. Drops auth, which never enters the lockfile. */
 export const primitiveSourceToLockSource = (source: PrimitiveSource): LockSkill["source"] =>
   source.type === "local"
     ? { type: "local", path: source.path }

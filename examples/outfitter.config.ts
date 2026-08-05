@@ -2,7 +2,7 @@
  * Example manifest, in the TypeScript form.
  *
  * Copy to your project root as `outfitter.config.ts`. Because it is code, target
- * directories and selections can be computed — which is the point of preferring
+ * directories and selections can be computed, which is the point of preferring
  * it over YAML when you have a container path or an env var to thread through.
  */
 

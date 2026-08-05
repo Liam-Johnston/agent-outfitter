@@ -1,7 +1,7 @@
 # One image, two harnesses.
 #
 # The same application code runs against both targets, differing only by
-# HARNESS — which is the property worth proving. If outfitting Codex and
+# HARNESS, which is the property worth proving. If outfitting Codex and
 # outfitting Claude Code needed different wrapper code, the target abstraction
 # would not be earning its place.
 #
@@ -10,7 +10,7 @@
 # `/workspace/out` is mounted: the application and its `node_modules` live
 # elsewhere in `/workspace` and must not be shadowed.
 #
-# No install location is configured anywhere — `/workspace/out` is both HOME and
+# No install location is configured anywhere: `/workspace/out` is both HOME and
 # the working directory in the image, so the library's default paths land there on
 # their own. That is what makes the output representative of what someone gets
 # when they pass nothing.

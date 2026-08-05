@@ -1,7 +1,7 @@
 {
   "name": "agent-outfitter",
   "version": "0.2.0",
-  "description": "Library-first agent package manager: resolve, verify, and install agent primitives — skills, MCP servers, and instruction fragments — into Claude Code, Codex, or any harness, from an await-able TypeScript API.",
+  "description": "Library-first agent package manager. Resolve, verify, and install agent primitives (skills, MCP servers, instruction fragments) into Claude Code, Codex, or any harness, from an await-able TypeScript API.",
   "keywords": [
     "agent",
     "agents",

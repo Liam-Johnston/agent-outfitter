@@ -1,7 +1,7 @@
 /**
  * MCP config translation and merging.
  *
- * MCP servers are the only thing agent-outfitter writes into a harness's config —
+ * MCP servers are the only thing agent-outfitter writes into a harness's config;
  * skills themselves are auto-discovered from their directory. Every write here
  * is a *merge*: entries the user or another tool put in the file are preserved,
  * and agent-outfitter only ever adds, updates, or removes servers it manages.
@@ -17,7 +17,7 @@ import { pathExists, readTextFile, writeFileAtomic } from "../fsutil.js";
 import type { McpServer, ResolvedMcpServer, OutfitterWarning } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Codex — $CODEX_HOME/config.toml, [mcp_servers.<name>]
+// Codex: $CODEX_HOME/config.toml, [mcp_servers.<name>]
 // ---------------------------------------------------------------------------
 
 export const toCodexMcpEntry = (server: McpServer): Record<string, unknown> => {
@@ -103,7 +103,7 @@ export const mergeCodexToml = (
 };
 
 // ---------------------------------------------------------------------------
-// Claude — .mcp.json, { "mcpServers": { ... } }
+// Claude: .mcp.json, { "mcpServers": { ... } }
 // ---------------------------------------------------------------------------
 
 /**

@@ -3,7 +3,7 @@
  *
  * Skills ship code that runs inside the agent's environment, so provenance is a
  * first-class concern rather than a lint. Everything enforced here happens at
- * resolve time — before a single byte is written into a target.
+ * resolve time, before a single byte is written into a target.
  */
 
 import { PolicyViolationError } from "./errors.js";
@@ -86,7 +86,7 @@ export interface McpTrustDecision {
 /**
  * Gate an MCP server.
  *
- * Manifest-declared servers are trusted by definition — the operator wrote them
+ * Manifest-declared servers are trusted by definition: the operator wrote them
  * down. Servers pulled in transitively by a skill are the interesting case:
  * they are dropped with a warning unless `allowTransitiveMcp` is set or the
  * server matches an explicit allowlist. This is the non-interactive analogue of

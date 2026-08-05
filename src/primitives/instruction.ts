@@ -1,5 +1,5 @@
 /**
- * Instruction primitives — the `AGENTS.md` / `CLAUDE.md` layer.
+ * Instruction primitives: the `AGENTS.md` / `CLAUDE.md` layer.
  *
  * A skill is a folder the harness discovers; an instruction fragment is text
  * spliced into a file the harness always reads. That makes the merge, not the
@@ -112,7 +112,7 @@ export const discoverInstructions = async (
     );
   }
 
-  // Only the directory's own files — nesting would make names ambiguous.
+  // Only the directory's own files: nesting would make names ambiguous.
   const files = (await listFiles(abs)).filter(
     (f) => !f.includes(posix.sep) && FRAGMENT_EXTENSIONS.some((e) => f.toLowerCase().endsWith(e)),
   );
@@ -218,7 +218,7 @@ export const mergeInstructions = (
     const region = renderRegion(instruction);
     const re = regionRegExp(instruction.name);
     if (re.test(document)) {
-      // Replace in place — a moved block keeps the position its author chose.
+      // Replace in place: a moved block keeps the position its author chose.
       document = document.replace(regionRegExp(instruction.name), region);
     } else {
       append.push(region);

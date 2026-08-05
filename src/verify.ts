@@ -3,8 +3,8 @@
  *
  * Two things matter here. Bundled scripts run inside the agent's environment,
  * so their presence is surfaced (and can be refused). And a skill's text is fed
- * straight into a model's context, which makes invisible Unicode — bidi
- * overrides, zero-width joiners, Unicode tag characters — a prompt-injection
+ * straight into a model's context, which makes invisible Unicode (bidi
+ * overrides, zero-width joiners, Unicode tag characters) a prompt-injection
  * vector that a human reviewer reading the diff cannot see.
  */
 
@@ -17,7 +17,7 @@ import type { ResolvedPolicy, OutfitterWarning } from "./types.js";
 /**
  * Characters that render as nothing (or reorder what follows) in a diff view.
  *
- * Excludes U+FEFF at offset 0, which is a legitimate BOM — handled below.
+ * Excludes U+FEFF at offset 0, which is a legitimate BOM, handled below.
  */
 const HIDDEN_CHARS: ReadonlyArray<[start: number, end: number, label: string]> = [
   [0x00ad, 0x00ad, "soft hyphen"],
@@ -179,7 +179,7 @@ export const checkTree = async (
         subject: name,
         message:
           `Skill "${name}" bundles ${scripts.length} file(s) under scripts/. These run inside ` +
-          `the agent's environment — review them before trusting this source.`,
+          `the agent's environment. Review them before trusting this source.`,
         detail: { scripts },
       });
     }
@@ -203,7 +203,7 @@ export const checkTree = async (
         code: "hidden-unicode",
         subject: name,
         message:
-          `Skill "${name}" contains ${hiddenUnicode.length} hidden Unicode character(s) — ` +
+          `Skill "${name}" contains ${hiddenUnicode.length} hidden Unicode character(s), ` +
           `a known prompt-injection vector: ${summary}`,
         detail: { findings: hiddenUnicode },
       });

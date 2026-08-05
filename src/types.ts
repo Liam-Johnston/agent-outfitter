@@ -14,7 +14,7 @@ export type AuthRef = { env: string } | { token: string };
 
 /**
  * Resolves a token for a given host/owner pair. Returning `undefined` means
- * "anonymous" — the fetch proceeds without an `Authorization` header.
+ * "anonymous": the fetch proceeds without an `Authorization` header.
  */
 export type AuthResolver = (
   host: string,
@@ -125,7 +125,7 @@ export interface ResolvedMcpServer {
 // ---------------------------------------------------------------------------
 
 /**
- * A named fragment of agent instructions — the `AGENTS.md` / `CLAUDE.md` layer.
+ * A named fragment of agent instructions: the `AGENTS.md` / `CLAUDE.md` layer.
  *
  * Unlike a skill, an instruction is not a folder the harness discovers; it is
  * text merged into a file the harness always reads. So it is stored as content
@@ -184,7 +184,7 @@ export interface Skill {
 
 export interface ResolvedSkill extends Skill {
   source: PrimitiveSource;
-  /** The ref as requested — branch, tag, or SHA. `""` for local sources. */
+  /** The ref as requested: branch, tag, or SHA. `""` for local sources. */
   ref: string;
   /** Exact commit SHA. `""` for local sources. */
   commit: string;
@@ -193,7 +193,7 @@ export interface ResolvedSkill extends Skill {
   contentHash: string;
   /** Absolute path to the verified staging directory this skill was read from. */
   stagedDir: string;
-  /** Resolved dependency names (skills only) — edges of the install DAG. */
+  /** Resolved dependency names (skills only): edges of the install DAG. */
   dependsOn: string[];
   /** MCP server names this skill pulled in. */
   mcpDependencies: string[];
@@ -331,7 +331,7 @@ export interface ResolvedPolicy
 // ---------------------------------------------------------------------------
 
 export interface TargetContext {
-  /** The manager's working root — where the manifest and lockfile live. */
+  /** The manager's working root: where the manifest and lockfile live. */
   root: string;
   cacheDir: string;
   emit: EventSink;
@@ -376,14 +376,14 @@ export interface McpWriteInput {
   /**
    * Server names agent-outfitter wrote into this target on a previous run, from the
    * lockfile. Anything here that is not in `servers` is one this manager owns
-   * and should now remove — everything else in the config belongs to the user.
+   * and should now remove. Everything else in the config belongs to the user.
    */
   previouslyManaged: string[];
   ctx: TargetContext;
 }
 
 export interface McpWriteOutput {
-  /** Where the config was written — a file path, or a URI for non-file targets. */
+  /** Where the config was written: a file path, or a URI for non-file targets. */
   path: string;
   /** Server names actually written. */
   written: string[];
@@ -392,9 +392,9 @@ export interface McpWriteOutput {
 /**
  * A target is one agent harness's opinion about where things live.
  *
- * Primitive kinds land in genuinely different places and in different shapes —
+ * Primitive kinds land in genuinely different places and in different shapes:
  * a skill is a copied folder, an MCP server is a config table, an instruction is
- * a merged region of a markdown file — so each kind gets its own method rather
+ * a merged region of a markdown file, so each kind gets its own method rather
  * than one `materialize` that switches on kind internally. `supports` declares
  * which of them a target implements, so the manager can say precisely what will
  * not be installed instead of silently dropping it.
@@ -405,7 +405,7 @@ export interface AgentTarget {
   readonly supports: readonly PrimitiveKind[];
 
   /**
-   * Where a given kind lives for this target — an install directory for tree
+   * Where a given kind lives for this target: an install directory for tree
    * primitives, or the file that config/instruction primitives merge into.
    */
   resolveDir(kind: PrimitiveKind, ctx: TargetContext): string | Promise<string>;
@@ -481,7 +481,7 @@ export interface InstallResult {
   instructions: ResolvedInstruction[];
   warnings: OutfitterWarning[];
   lockfilePath: string;
-  /** True when `dryRun` was set — nothing was written. */
+  /** True when `dryRun` was set. Nothing was written. */
   dryRun: boolean;
 }
 

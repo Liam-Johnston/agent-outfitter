@@ -6,7 +6,7 @@
  *
  * The walk is breadth-first over sources. Each wave lists a source's skills
  * from frontmatter alone, hashes the trees it selected, and enqueues whatever
- * those skills declare — further skills, MCP servers, instruction fragments, and
+ * those skills declare: further skills, MCP servers, instruction fragments, and
  * (recorded but not installed) the remaining primitive kinds.
  */
 
@@ -155,7 +155,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
    *
    * Fragments are scanned for hidden Unicode whenever the policy is on, because
    * unlike a skill's supporting files this text goes straight into the agent's
-   * standing context — the highest-value place to hide an invisible directive.
+   * standing context, the highest-value place to hide an invisible directive.
    */
   const resolveInstructionEntry = async (
     entry: InstructionRefEntry,
@@ -223,7 +223,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
             subject: fragment.name,
             message:
               `Instruction fragment "${fragment.name}" contains ${findings.length} hidden ` +
-              `Unicode character(s) — this text is spliced into the agent's context: ${summary}`,
+              `Unicode character(s); this text is spliced into the agent's context: ${summary}`,
             detail: { findings },
           });
         }
@@ -281,8 +281,8 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
       for (const found of discovered) {
         const existing = skills.get(found.name);
         if (existing) {
-          // `stagedDir` is the exact folder the bytes came from — for git it
-          // includes the commit, for local it is the folder itself — so it is a
+          // `stagedDir` is the exact folder the bytes came from (for git it
+          // includes the commit, for local it is the folder itself), so it is a
           // sound identity test for "is this the same skill or a collision?".
           if (existing.stagedDir !== found.dir) {
             warn({
@@ -395,7 +395,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
  * Resolve a dependency ref declared inside a skill.
  *
  * Relative `local:` paths anchor to the declaring skill's own folder, the same
- * way a relative path in any other file does — so a sibling skill is `../name`.
+ * way a relative path in any other file does, so a sibling skill is `../name`.
  */
 const normalizeDependencyRef = (ref: PrimitiveRef, declaringSkillDir: string): NormalizedRef =>
   normalizeRef(ref, { root: declaringSkillDir });

@@ -60,4 +60,4 @@ jobs:
           title: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No NPM_TOKEN — OIDC handles auth and provenance is automatic.
+          # No NPM_TOKEN: OIDC handles auth and provenance is automatic.

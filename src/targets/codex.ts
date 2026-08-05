@@ -3,7 +3,7 @@
  *
  * Codex auto-discovers skills from `$CODEX_HOME/skills` (user scope) or
  * `<project>/.agents/skills` (project scope), so installing a skill is just
- * placing the folder — no config entry is involved. `config.toml` is touched
+ * placing the folder. No config entry is involved. `config.toml` is touched
  * only to register MCP servers, which are not auto-discovered.
  */
 
@@ -46,7 +46,7 @@ export interface CodexTargetOptions {
   /**
    * Where MCP servers go.
    *
-   * `"file"` writes `[mcp_servers.*]` into `config.toml` — persistent, and
+   * `"file"` writes `[mcp_servers.*]` into `config.toml`, which is persistent and
    * shared with the Codex CLI and IDE. `"sdk-config"` writes nothing and
    * instead exposes the same entries via `mcpConfigOverrides`, for passing to
    * `@openai/codex-sdk`'s `config` option. Default `"file"`.
@@ -83,7 +83,7 @@ export interface CodexTarget extends AgentTarget {
    * Available in both `mcpMode`s: with `"file"` the entries are also on disk in
    * `config.toml`, and passing them again is harmless.
    *
-   * Call after `install()` or `sync()` — the MCP entries are populated by the
+   * Call after `install()` or `sync()`; the MCP entries are populated by the
    * install. The context defaults to the one the last install ran under.
    */
   sdkOptions(ctx?: TargetContext): CodexSdkOptions;

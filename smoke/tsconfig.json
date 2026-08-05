@@ -6,7 +6,7 @@
   //
   // This matters more than it would for ordinary test code: `app/harness/*.ts` is
   // documentation people are invited to copy, and Bun strips types without
-  // checking them — so nothing else in the pipeline would notice an example that
+  // checking them, so nothing else in the pipeline would notice an example that
   // does not compile.
   "compilerOptions": {
     "lib": ["ESNext"],

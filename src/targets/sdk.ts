@@ -4,14 +4,14 @@
  * A target knows exactly where it put things and which of those locations its
  * harness actually reads. When the consumer is an SDK running in the same
  * process rather than the harness's own CLI, that knowledge is the difference
- * between a successful install and an agent that silently loads nothing — so
+ * between a successful install and an agent that silently loads nothing, so
  * each target exposes it as `sdkOptions()`, ready to spread into the SDK
  * constructor.
  *
  * ## Why this serialization differs from the on-disk one
  *
  * `toClaudeMcpEntry` writes `${VAR}` placeholders into `.mcp.json` because
- * Claude Code expands them when it reads the file — the secret never lands on
+ * Claude Code expands them when it reads the file; the secret never lands on
  * disk. An in-process SDK option object is not read by anything that performs
  * that expansion, so a placeholder would be passed through verbatim as a broken
  * credential. Here the value is resolved from `process.env` instead.
@@ -54,7 +54,7 @@ export interface ClaudeSdkOptions {
    * layer is anchored at the Claude config dir instead.
    */
   cwd?: string;
-  /** Where skills were installed. Informational — the SDK derives it itself. */
+  /** Where skills were installed. Informational: the SDK derives it itself. */
   skillsDir: string;
   /** The `CLAUDE.md` instructions were merged into. */
   instructionPath: string;
@@ -65,7 +65,7 @@ export interface CodexSdkOptions {
    * Environment overrides to merge into the SDK's `env`. Carries `CODEX_HOME`,
    * which is what points Codex at the home this target installed into.
    *
-   * Spread over `process.env` rather than passed alone — Codex needs `PATH` and
+   * Spread over `process.env` rather than passed alone, since Codex needs `PATH` and
    * its credentials from the ambient environment:
    * `new Codex({ env: { ...process.env, ...sdk.env } })`
    */

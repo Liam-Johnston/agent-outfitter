@@ -2,7 +2,7 @@
  * A full listing of what actually landed on disk.
  *
  * Read by walking the filesystem rather than by reporting what `install()`
- * returned — the point is to be able to confirm the install's own account of
+ * returned. The point is to be able to confirm the install's own account of
  * itself, so taking its word for the file list would defeat the exercise.
  *
  * Nothing is truncated. A long listing is the price of being able to look at the
@@ -85,7 +85,7 @@ export const printTree = (root: string, files: readonly FileEntry[]): void => {
   for (const [name, group] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
     const groupBytes = group.reduce((sum, f) => sum + f.bytes, 0);
     console.log(
-      `    ${name}/ ${DIM}— ${group.length} files, ${formatBytes(groupBytes)}${RESET}`,
+      `    ${name}/ ${DIM}${group.length} files, ${formatBytes(groupBytes)}${RESET}`,
     );
     for (const file of group) {
       // Strip the group prefix; it is already the line above.

@@ -44,7 +44,7 @@ export {
 /**
  * Targets a YAML/JSON manifest can name as a bare string.
  *
- * Only adapters with sensible zero-argument defaults are listed —
+ * Only adapters with sensible zero-argument defaults are listed:
  * `filesystemTarget` needs a directory, so it must be constructed in code.
  */
 const BUILTIN_TARGETS: Record<string, () => AgentTarget> = {

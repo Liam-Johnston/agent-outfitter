@@ -1,5 +1,5 @@
 /**
- * agent-outfitter — a library-first agent-skill package manager.
+ * agent-outfitter: a library-first agent-skill package manager.
  *
  * Import a function, hand it a manifest (or refs) and one or more targets,
  * `await` the result. Nothing runs on import and nothing is written until you
