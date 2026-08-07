@@ -18,12 +18,17 @@ export {
 } from "./openai-hosted.js";
 export {
   createContextCapture,
+  installedBundleHash,
   installedHash,
+  materializeBundlePaths,
   materializeToDir,
   removeInstructionsFromFile,
+  removeSettingsFromFile,
   resolveAgainstRoot,
+  unmaterializeBundlePaths,
   unmaterializeFromDir,
   writeInstructionFile,
+  writeSettingsFile,
   type ContextCapture,
 } from "./base.js";
 export {

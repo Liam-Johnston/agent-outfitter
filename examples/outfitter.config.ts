@@ -55,14 +55,52 @@ export default defineConfig({
     "local:./instructions",
   ],
 
+  // Bundles: opaque subtrees copied verbatim to declared destinations. How a
+  // committed harness installs, since `tools/`, `knowledge/`, and `hooks/`
+  // announce nothing about themselves the way a skill folder does. Declared
+  // rather than discovered, so `select:` globs do not apply to them.
+  bundles: [
+    {
+      ref: "github:awslabs/aidlc-workflows/dist/claude#v2",
+      name: "aidlc-engine",
+      paths: {
+        ".claude/tools": ".claude/tools",
+        ".claude/hooks": ".claude/hooks",
+        ".claude/knowledge": ".claude/knowledge",
+        // A bundle may write outside `.claude/`, which is the wider reach that
+        // `executableHarness` below exists to gate.
+        aidlc: "aidlc",
+      },
+    },
+  ],
+
+  // Settings: merged into `.claude/settings.json` key by key, so a settings file
+  // you wrote yourself keeps everything it holds. Ownership is recorded in the
+  // lockfile, which is what lets remove() unwind exactly these keys.
+  settings: [
+    {
+      ref: "github:awslabs/aidlc-workflows/dist/claude/.claude/settings.json#v2",
+      name: "aidlc",
+    },
+    // Inline, for the handful of keys that belong to this project rather than to
+    // anything fetched. Needs a name: there is no filename to derive one from.
+    { name: "local-overrides", settings: { env: { AWS_REGION: "eu-west-2" } } },
+  ],
+
   policy: {
     allowedHosts: ["github.com"],
-    allowedOwners: ["acme", "anthropics"],
+    allowedOwners: ["acme", "anthropics", "awslabs"],
     requireLockHashMatch: true,
     scripts: "warn",
+    // Bundles that install executable files, and settings fragments that register
+    // hooks or a status line, default to "deny": that code runs on every matching
+    // tool call whether or not anything invoked it. "warn" installs and names what
+    // was registered; "allow" installs silently.
+    executableHarness: "warn",
     scan: "warn",
     // A dependency cannot silently attach a tool server, or rewrite the
-    // agent's standing instructions, without the operator opting in.
+    // agent's standing instructions, without the operator opting in. Bundles and
+    // settings have no transitive form at all: only this manifest can declare one.
     allowTransitiveMcp: false,
     allowTransitiveInstructions: false,
     allowedMcpHosts: ["api.githubcopilot.com"],

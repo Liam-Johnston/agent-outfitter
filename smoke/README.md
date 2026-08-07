@@ -6,9 +6,10 @@ deployment shape the library is built for, and the one the unit tests do not
 cover.
 
 ```sh
-make smoke          # both harnesses
+make smoke          # every harness
 make smoke-codex    # Codex only
 make smoke-claude   # Claude only
+make smoke-aidlc    # a whole committed harness: AWS AI-DLC, from a pinned tag
 make smoke-output   # list what the last run left on disk
 make smoke-clean    # drop the image, build cache, and output
 ```
@@ -20,13 +21,18 @@ Each run bind-mounts its output, so the installed tree survives the container an
 can be opened from the host:
 
 ```
-test-output/codex/.codex/skills/{pdf,xlsx,mcp-builder}/
+test-output/codex/.codex/skills/{pdf,xlsx,mcp-builder,ce-work}/
 test-output/codex/.codex/{config.toml,AGENTS.md}
 test-output/codex/outfitter.lock.json
 
-test-output/claude/.claude/skills/{pdf,xlsx,mcp-builder}/
+test-output/claude/.claude/skills/{pdf,xlsx,mcp-builder,ce-work}/
 test-output/claude/{.mcp.json,CLAUDE.md}
 test-output/claude/outfitter.lock.json
+
+test-output/aidlc/.claude/skills/aidlc-*/            # 39 skills
+test-output/aidlc/.claude/{tools,hooks,knowledge,agents,scopes,sensors,aidlc-common}/
+test-output/aidlc/.claude/settings.json              # merged, not written over
+test-output/aidlc/{aidlc/,CLAUDE.md,outfitter.lock.json}
 ```
 
 Nothing configures those paths. They are where the library puts things when you
@@ -43,9 +49,13 @@ which hides four classes of failure. A container hits all four on its first run.
    empty container, so `exports`, the `files` list, and the dependency closure
    are exercised the way a consumer meets them rather than the way this repo's
    own tsconfig sees them.
-2. **Real sources do not resolve.** Skills come from `anthropics/skills` over the
-   network, which covers commit pinning against a live REST API, tarball
-   extraction, and content hashing of trees nobody wrote as a fixture.
+2. **Real sources do not resolve.** Skills come from `anthropics/skills` and
+   `EveryInc/compound-engineering-plugin` over the network, which covers commit
+   pinning against a live REST API, tarball extraction, and content hashing of
+   trees nobody wrote as a fixture. The two repositories are laid out
+   differently, so both ref shapes get exercised: a directory of skills narrowed
+   by `select`, and a ref pointing straight at one skill's folder inside a
+   repository that is a plugin rather than a skills collection.
 3. **The harness cannot see what was installed.** This is the check that matters.
    A wrong install path fails loudly. A wrong SDK option produces an agent that
    starts normally and knows nothing, so the test asserts that
@@ -61,20 +71,49 @@ which hides four classes of failure. A container hits all four on its first run.
 |---|---|
 | **`app/harness/codex.ts`** | **`setupCodex()`. Copy this to outfit Codex.** |
 | **`app/harness/claude.ts`** | **`setupClaude()`. Copy this to outfit Claude.** |
-| `app/setup.ts` | The test: calls one of the above, then checks the result. |
+| **`app/harness/aidlc.ts`** | **`setupAidlc()`. Copy this to install a whole committed harness.** |
+| `app/setup.ts` | The test for the two skill-shaped harnesses: calls one, checks the result. |
+| `app/aidlc.ts` | The test for the committed-harness install. Its own entrypoint. |
 | `app/assert.ts` | Dependency-free assertions; exits non-zero on any failure. |
 | `app/inventory.ts` | Walks the target directories and prints every file installed. |
 | `instructions/` | A local instruction fragment, so that primitive stays hermetic. |
 | `Dockerfile` | Two stages: pack the library, install it into a clean image. |
 | `docker-compose.yml` | The same image twice, differing only by `HARNESS` and its mount. |
 
-The two bold files are meant to be read and lifted. Each is self-contained,
+The bold files are meant to be read and lifted. Each is self-contained,
 covering manifest, MCP servers, policy, auth, install, and SDK handoff in one
 file you can read top to bottom, and they duplicate each other rather than share
 a helper, so copying one gets you everything. `setup.ts` holds no outfitting
 logic of its own: an example carrying test scaffolding is one nobody can lift
 cleanly, and assertions living inside the thing they assert on drift towards
 agreeing with it.
+
+### The committed-harness run
+
+`smoke-aidlc` is a different shape of claim from the other two. They ask "did the
+default paths resolve, and does `sdkOptions()` point at them". This one asks
+whether a framework arrives *complete*, and whether it leaves the operator's own
+files intact:
+
+- All four kinds land together: 39 skills, the ~227-file engine as a bundle, the
+  settings fragment, and an instruction fragment, each pinned to one commit.
+- The engine is reconciled file by file against the lockfile's recorded list, and
+  the engine is asserted to be on disk **before** the first skill: every one of
+  those skills shells into `.claude/tools/aidlc-orchestrate.ts`, so a skill that
+  is discoverable before its engine exists reports itself as broken.
+- `settings.json` is seeded with a hand-written file first — an `env` value, a
+  `permissions.allow` rule, an unrelated scalar, and a hook of their own in an
+  event the harness also uses. Every one of them must survive the merge, and after
+  `remove()` the file must be **byte-identical** to what was seeded.
+- The 18 hook registrations are reconciled against the *source* `settings.json`
+  fetched separately, not against a count written into the test, with floors
+  underneath so a silently-empty source cannot pass.
+- `verify()` is run against a single edited byte in the engine, which must be
+  caught.
+
+It also asserts that the hidden-Unicode scan *reports* the four legitimate
+mid-file U+FEFFs this source carries. That is why the example uses `scan: "warn"`
+rather than `"deny"`: the finding is real, benign, and worth seeing.
 
 ## Using these as a starting point
 
@@ -116,7 +155,8 @@ notice an example that does not compile.
 
 ## What gets checked
 
-38 assertions per harness, in the order a wrapper depends on them:
+41 assertions per skill-shaped harness (44 for the AI-DLC run), in the order a
+wrapper depends on them:
 
 - **Install.** Every requested skill resolved and pinned to a 40-character
   commit, MCP servers and the instruction fragment resolved, lockfile written.
@@ -130,7 +170,7 @@ notice an example that does not compile.
 - **Inventory.** Every installed file is printed with its size, read off the
   filesystem rather than reported from the install result, then reconciled
   against the file list the lockfile hashed each skill over. Nothing is
-  truncated; the listing currently runs to 75 files across the three skills, and
+  truncated; the listing currently runs to 97 files across the four skills, and
   follows whatever upstream ships. A file missing from the directory, or present
   but unaccounted for in the lockfile, fails the run. That is what makes the
   listing evidence rather than decoration, since a content hash guarding a tree
@@ -169,7 +209,7 @@ docker compose -f smoke/docker-compose.yml run --rm -e KEEP_OUTPUT=1 \
     mkdir -p /workspace/out/.claude/skills
     echo stray > /workspace/out/.claude/skills/STRAY.md
     bun run /workspace/app/setup.ts'
-# 1, with "lockfile totals 75, directory holds 76"
+# 1, with "lockfile totals 97, directory holds 98"
 ```
 
 Both preliminaries matter. `KEEP_OUTPUT=1` is needed because the run otherwise
@@ -205,10 +245,12 @@ Two things the workflow has to get right, both of which fail silently otherwise:
   lockfile and nothing else.
 
 The job depends on `anthropics/skills#main` staying resolvable with the `pdf`,
-`xlsx`, and `mcp-builder` skills present. That is a real external dependency: an
-upstream rename would fail CI for a reason unrelated to this repository. Pinning
-the ref to a tag would remove the risk, at the cost of no longer exercising
-ref-to-commit resolution, which a full SHA short-circuits entirely.
+`xlsx`, and `mcp-builder` skills present, and on
+`EveryInc/compound-engineering-plugin#main` keeping `skills/ce-work`. That is a
+real external dependency: an upstream rename would fail CI for a reason
+unrelated to this repository. Pinning the refs to tags would remove the risk, at
+the cost of no longer exercising ref-to-commit resolution, which a full SHA
+short-circuits entirely.
 
 ## Notes
 

@@ -10,17 +10,22 @@
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { ensureDir, writeFileAtomic } from "../fsutil.js";
 import {
   createContextCapture,
+  installedBundleHash,
   installedHash,
+  materializeBundlePaths,
   materializeToDir,
   removeInstructionsFromFile,
+  removeSettingsFromFile,
   resolveAgainstRoot,
+  unmaterializeBundlePaths,
   unmaterializeFromDir,
   writeInstructionFile,
+  writeSettingsFile,
 } from "./base.js";
 import {
   mergeMcpJson,
@@ -31,6 +36,8 @@ import {
 import { toClaudeSdkMcpServers, type ClaudeSdkOptions } from "./sdk.js";
 import type {
   AgentTarget,
+  BundleMaterializeInput,
+  BundleMaterializeOutput,
   InstructionWriteInput,
   InstructionWriteOutput,
   MaterializeInput,
@@ -39,6 +46,10 @@ import type {
   McpWriteInput,
   McpWriteOutput,
   PrimitiveKind,
+  ResolvedBundle,
+  SettingsRemoveInput,
+  SettingsWriteInput,
+  SettingsWriteOutput,
   TargetContext,
 } from "../types.js";
 
@@ -72,6 +83,8 @@ export interface ClaudeTarget extends AgentTarget {
   mcpConfigPath(ctx: TargetContext): string;
   /** Absolute path to the `CLAUDE.md` this target merges instructions into. */
   instructionPath(ctx: TargetContext): string;
+  /** Absolute path to the `.claude/settings.json` this target merges settings into. */
+  settingsPath(ctx: TargetContext): string;
   /**
    * Everything the Claude Agent SDK needs to actually see what this target
    * installed, most importantly `settingSources`, without which the SDK loads
@@ -125,6 +138,24 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
     if (mode === "plugin") return join(pluginDir(ctx), ".mcp.json");
     return scope === "user" ? join(claudeDir(ctx), ".mcp.json") : join(baseDir(ctx), ".mcp.json");
   };
+
+  /**
+   * `settings.json` lives *inside* `.claude/`, unlike `CLAUDE.md` and `.mcp.json`
+   * which sit at the project root. User scope resolves to `~/.claude/settings.json`,
+   * honouring `CLAUDE_CONFIG_DIR` the same way everything else here does.
+   */
+  const settingsPath = (ctx: TargetContext): string => join(claudeDir(ctx), "settings.json");
+
+  /**
+   * What a bundle's declared destinations resolve against.
+   *
+   * The project directory, so a manifest writes `.claude/tools` and `aidlc/` the
+   * same way a repository would hold them. User scope has no project to anchor to,
+   * so it uses the directory `.claude` itself sits in, keeping a declared
+   * `.claude/tools` landing in the Claude config directory rather than beside it.
+   */
+  const bundleRoot = (ctx: TargetContext): string =>
+    scope === "user" ? dirname(claudeDir(ctx)) : baseDir(ctx);
 
   /** A plugin bundle is only discoverable once its manifest exists. */
   const ensurePluginManifest = async (ctx: TargetContext): Promise<void> => {
@@ -192,9 +223,30 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
     return scope === "user" ? join(claudeDir(ctx), file) : join(baseDir(ctx), file);
   };
 
+  /**
+   * Bundles and settings mean nothing inside a plugin bundle.
+   *
+   * A plugin is a self-contained directory Claude loads through `plugins`; it has
+   * no project root to install an engine into and no settings file of its own. So
+   * rather than write files somewhere they will never be read, say so and skip.
+   */
+  const skipInPluginMode = (ctx: TargetContext, what: string, subject: string): boolean => {
+    if (mode !== "plugin") return false;
+    ctx.warn({
+      code: "target-config",
+      subject: options.name ?? "claude",
+      message:
+        `Target "${options.name ?? "claude"}" is in plugin mode, where ${what} has no meaning: a ` +
+        `plugin bundle has no project root and no settings file. "${subject}" was skipped. Use ` +
+        `mode: "skills" to install it.`,
+      detail: { mode, subject },
+    });
+    return true;
+  };
+
   return {
     name: options.name ?? "claude",
-    supports: ["skill", "mcp", "instruction"],
+    supports: ["skill", "mcp", "instruction", "bundle", "settings"],
     consumer,
 
     mcpConfigPath(ctx: TargetContext): string {
@@ -202,6 +254,8 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
     },
 
     instructionPath,
+
+    settingsPath,
 
     sdkOptions(override?: TargetContext): ClaudeSdkOptions {
       const ctx = contexts.resolve(override);
@@ -227,6 +281,10 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       contexts.capture(ctx);
       if (kind === "mcp") return mcpPath(ctx);
       if (kind === "instruction") return instructionPath(ctx);
+      if (kind === "settings") return settingsPath(ctx);
+      // A bundle has one destination per declared path, so the useful answer for
+      // the kind as a whole is the root they resolve against.
+      if (kind === "bundle") return bundleRoot(ctx);
       return skillsDir(ctx);
     },
 
@@ -293,6 +351,52 @@ export const claudeTarget = (options: ClaudeTargetOptions = {}): ClaudeTarget =>
       if (existing === undefined) return;
       const merged = mergeMcpJson(existing, [], names, path, toClaudeMcpEntry);
       await writeConfigIfChanged(path, merged.content);
+    },
+
+    async materializeBundle(input: BundleMaterializeInput): Promise<BundleMaterializeOutput> {
+      contexts.capture(input.ctx);
+      if (skipInPluginMode(input.ctx, "a bundle", input.bundle.name)) return { paths: {} };
+      const root = bundleRoot(input.ctx);
+      return materializeBundlePaths(input, (dest) => join(root, dest));
+    },
+
+    async currentBundleHash(
+      bundle: ResolvedBundle,
+      ctx: TargetContext,
+    ): Promise<string | undefined> {
+      contexts.capture(ctx);
+      if (mode === "plugin") return undefined;
+      const root = bundleRoot(ctx);
+      return installedBundleHash(bundle, (dest) => join(root, dest));
+    },
+
+    async unmaterializeBundle(
+      paths: Record<string, string>,
+      ctx: TargetContext,
+    ): Promise<void> {
+      if (mode === "plugin") return;
+      const root = bundleRoot(ctx);
+      await unmaterializeBundlePaths(paths, (dest) => join(root, dest));
+    },
+
+    async writeSettings(input: SettingsWriteInput): Promise<SettingsWriteOutput> {
+      contexts.capture(input.ctx);
+      const path = settingsPath(input.ctx);
+      if (
+        skipInPluginMode(
+          input.ctx,
+          "a settings fragment",
+          input.settings.map((s) => s.name).join(", ") || "(none)",
+        )
+      ) {
+        return { path, written: [], owned: {} };
+      }
+      return writeSettingsFile(path, input);
+    },
+
+    async removeSettings(input: SettingsRemoveInput): Promise<void> {
+      if (mode === "plugin") return;
+      await removeSettingsFromFile(settingsPath(input.ctx), input);
     },
   };
 };

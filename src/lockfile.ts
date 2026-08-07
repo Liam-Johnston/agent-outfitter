@@ -76,6 +76,54 @@ const lockInstructionSchema = z
   })
   .strict();
 
+const lockBundleSchema = z
+  .object({
+    source: sourceSchema,
+    ref: z.string(),
+    commit: z.string(),
+    /** Hash over every file in every declared source subtree. */
+    contentHash: z.string(),
+    /** Source subtree -> destination, relative to the target's root. */
+    paths: z.record(z.string(), z.string()),
+    /** Source subtree -> its own hash, so each destination verifies alone. */
+    pathHashes: z.record(z.string(), z.string()).default({}),
+    files: z.array(z.string()).default([]),
+    declaredBy: z.string(),
+    trusted: z.boolean().default(true),
+  })
+  .strict();
+
+const lockSettingsSchema = z
+  .object({
+    source: sourceSchema,
+    ref: z.string(),
+    commit: z.string(),
+    subdir: z.string(),
+    contentHash: z.string(),
+    /**
+     * An inline fragment carries its own content: there is no commit to re-read
+     * it from, and `sync()` must not have to consult the manifest.
+     */
+    content: z.string().optional(),
+    inline: z.boolean().default(false),
+    declaredBy: z.string(),
+    trusted: z.boolean().default(true),
+  })
+  .strict();
+
+/** The keys agent-outfitter owns in a target's settings file, for one fragment. */
+const ownedSettingsSchema = z
+  .object({
+    env: z.array(z.string()).default([]),
+    permissions: z.record(z.string(), z.array(z.string())).default({}),
+    hooks: z.array(z.string()).default([]),
+    hookGroups: z.array(z.string()).default([]),
+    scalars: z.array(z.string()).default([]),
+    /** Hash of the owned projection, so an edited value is detectable. */
+    hash: z.string().default(""),
+  })
+  .strict();
+
 const lockTargetSchema = z
   .object({
     /** skill name -> absolute install path (or target-defined identifier). */
@@ -90,6 +138,12 @@ const lockTargetSchema = z
     instructionPath: z.string().optional(),
     /** Upload-style targets record their remote ids here. */
     skillIds: z.record(z.string(), z.string()).optional(),
+    /** Bundle name -> (source subtree -> absolute destination). */
+    bundles: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+    /** Settings fragment name -> the keys agent-outfitter owns for it. */
+    settings: z.record(z.string(), ownedSettingsSchema).default({}),
+    /** Settings file agent-outfitter merged into, if any. */
+    settingsPath: z.string().optional(),
   })
   .strict();
 
@@ -99,6 +153,8 @@ export const lockfileSchema = z
     skills: z.record(z.string(), lockSkillSchema).default({}),
     mcp: z.record(z.string(), lockMcpSchema).default({}),
     instructions: z.record(z.string(), lockInstructionSchema).default({}),
+    bundles: z.record(z.string(), lockBundleSchema).default({}),
+    settings: z.record(z.string(), lockSettingsSchema).default({}),
     targets: z.record(z.string(), lockTargetSchema).default({}),
   })
   .strict();
@@ -107,6 +163,8 @@ export type Lockfile = z.infer<typeof lockfileSchema>;
 export type LockSkill = z.infer<typeof lockSkillSchema>;
 export type LockMcp = z.infer<typeof lockMcpSchema>;
 export type LockInstruction = z.infer<typeof lockInstructionSchema>;
+export type LockBundle = z.infer<typeof lockBundleSchema>;
+export type LockSettings = z.infer<typeof lockSettingsSchema>;
 export type LockTarget = z.infer<typeof lockTargetSchema>;
 
 export const emptyLockfile = (): Lockfile => ({
@@ -114,7 +172,18 @@ export const emptyLockfile = (): Lockfile => ({
   skills: {},
   mcp: {},
   instructions: {},
+  bundles: {},
+  settings: {},
   targets: {},
+});
+
+/** A `LockTarget` with every section present, for code that mutates one. */
+export const emptyLockTarget = (): LockTarget => ({
+  skills: {},
+  mcp: [],
+  instructions: [],
+  bundles: {},
+  settings: {},
 });
 
 export const lockfilePath = (root: string): string => join(root, LOCKFILE_NAME);
@@ -153,6 +222,8 @@ export const serializeLockfile = (lock: Lockfile): string => {
     skills: sortRecord(lock.skills),
     mcp: sortRecord(lock.mcp),
     instructions: sortRecord(lock.instructions),
+    bundles: sortRecord(lock.bundles),
+    settings: sortRecord(lock.settings),
     targets: sortRecord(lock.targets),
   };
   return `${JSON.stringify(JSON.parse(canonicalJson(ordered)), null, 2)}\n`;

@@ -34,17 +34,20 @@ export type {
 
 // -- manifest ---------------------------------------------------------------
 export {
+  bundleRefSchema,
   defineConfig,
   findManifest,
   loadManifest,
   manifestSchema,
   MANIFEST_CANDIDATES,
+  settingsRefSchema,
   validateManifest,
 } from "./manifest.js";
 
 // -- lockfile ---------------------------------------------------------------
 export {
   emptyLockfile,
+  emptyLockTarget,
   lockfilePath,
   lockfileSchema,
   LOCKFILE_NAME,
@@ -54,8 +57,10 @@ export {
 } from "./lockfile.js";
 export type {
   Lockfile,
+  LockBundle,
   LockInstruction,
   LockMcp,
+  LockSettings,
   LockSkill,
   LockTarget,
 } from "./lockfile.js";
@@ -70,13 +75,18 @@ export {
   resolveTarget,
   // Building blocks for custom adapters.
   createContextCapture,
+  installedBundleHash,
   installedHash,
+  materializeBundlePaths,
   materializeToDir,
   mergeCodexToml,
   mergeMcpJson,
   removeInstructionsFromFile,
+  removeSettingsFromFile,
   resolveAgainstRoot,
+  unmaterializeBundlePaths,
   writeInstructionFile,
+  writeSettingsFile,
   toClaudeMcpEntry,
   toClaudeSdkMcpEntry,
   toClaudeSdkMcpServers,
@@ -128,8 +138,39 @@ export {
   renderRegion,
 } from "./primitives/instruction.js";
 export { describeMcpServer, mcpConfigHash, normalizeMcpServer } from "./primitives/mcp.js";
+export {
+  assertBundleDestinationsDistinct,
+  bundleNameFromSource,
+  normalizeBundlePath,
+  normalizeBundlePaths,
+  stageBundle,
+} from "./primitives/bundle.js";
+export {
+  emptyOwnedSettingsKeys,
+  hookGroupKey,
+  hookKey,
+  mergeSettings,
+  parseSettingsDocument,
+  parseSettingsFragment,
+  settingsProjection,
+  settingsProjectionHash,
+  settingsRegistrations,
+  subtractOwnedSettings,
+  unionOwnedSettings,
+} from "./primitives/settings.js";
+export type { SettingsMergeResult, SettingsRegistrations } from "./primitives/settings.js";
+export type { StagedBundle } from "./primitives/bundle.js";
 export { DEFAULT_POLICY, decideInstructionTrust, decideMcpTrust, resolvePolicy } from "./policy.js";
-export { checkTree, scanTextForHiddenUnicode } from "./verify.js";
+export {
+  checkExecutableHarness,
+  checkTree,
+  commandReferencedFiles,
+  executableFiles,
+  scanTextForHiddenUnicode,
+  scriptFiles,
+  summarizeHarness,
+} from "./verify.js";
+export type { HarnessSummary } from "./verify.js";
 export { defaultCacheDir } from "./paths.js";
 
 // -- errors -----------------------------------------------------------------
@@ -153,6 +194,10 @@ export type {
   AgentTarget,
   AuthRef,
   AuthResolver,
+  BundleMaterializeInput,
+  BundleMaterializeOutput,
+  BundlePaths,
+  BundleRefEntry,
   EventSink,
   GitProvider,
   InstallResult,
@@ -170,13 +215,22 @@ export type {
   McpWriteOutput,
   NamedMcpServer,
   NormalizedRef,
+  OwnedSettings,
+  OwnedSettingsKeys,
   Primitive,
   PrimitiveKind,
+  ResolvedBundle,
   ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
+  ResolvedSettings,
   ResolvedSkill,
   Resolution,
+  SettingsFragment,
+  SettingsRefEntry,
+  SettingsRemoveInput,
+  SettingsWriteInput,
+  SettingsWriteOutput,
   Skill,
   SkillDependencies,
   OutfitterEvent,

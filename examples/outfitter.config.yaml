@@ -34,11 +34,41 @@ instructions:
     name: voice
   - local:./instructions
 
+# Bundles: opaque subtrees copied verbatim to declared destinations. This is how
+# a committed harness (engine scripts, knowledge, hooks) installs, since none of
+# those directories announce themselves the way a skill folder does. Declared
+# rather than discovered, so `select:` globs do not apply.
+bundles:
+  - ref: github:awslabs/aidlc-workflows/dist/claude#v2
+    name: aidlc-engine
+    paths:
+      .claude/tools: .claude/tools
+      .claude/hooks: .claude/hooks
+      .claude/knowledge: .claude/knowledge
+      # A bundle may write outside .claude/, which is why executableHarness below
+      # has to be opted into.
+      aidlc: aidlc
+
+# Settings: merged into .claude/settings.json key by key, so a settings file you
+# wrote yourself keeps everything it holds. Ownership is recorded in the lockfile,
+# which is what lets `remove()` unwind exactly these keys and nothing else.
+settings:
+  - ref: github:awslabs/aidlc-workflows/dist/claude/.claude/settings.json#v2
+    name: aidlc
+  - name: local-overrides
+    settings:
+      env: { AWS_REGION: eu-west-2 }
+
 policy:
   allowedHosts: [github.com]
-  allowedOwners: [acme, anthropics]
+  allowedOwners: [acme, anthropics, awslabs]
   requireLockHashMatch: true
   scripts: warn
+  # Bundles that install executable files, and settings fragments that register
+  # hooks or a status line, default to "deny": that code runs on every tool call
+  # whether or not anything invokes it. "warn" installs and reports what was
+  # registered; "allow" installs silently.
+  executableHarness: warn
   scan: warn
   allowTransitiveMcp: false
   allowTransitiveInstructions: false

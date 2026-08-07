@@ -10,31 +10,56 @@
  * (recorded but not installed) the remaining primitive kinds.
  */
 
+import { basename, join, resolve as resolvePath } from "node:path";
+
 import { DEFAULT_CONCURRENCY, mapLimit } from "./concurrency.js";
 import { discoverSkills } from "./discover.js";
-import { CycleError, PolicyViolationError } from "./errors.js";
-import { hashString, hashTree } from "./hash.js";
-import { listFiles } from "./fsutil.js";
+import { CycleError, PolicyViolationError, SourceResolutionError } from "./errors.js";
+import { hashCanonicalJson, hashString, hashTree } from "./hash.js";
+import { listFiles, readTextFile } from "./fsutil.js";
 import { assertSourceAllowed, decideInstructionTrust, decideMcpTrust } from "./policy.js";
+import {
+  assertBundleDestinationsDistinct,
+  bundleNameFromSource,
+  normalizeBundlePaths,
+  stageBundle,
+} from "./primitives/bundle.js";
 import { discoverInstructions, resolveInstruction } from "./primitives/instruction.js";
 import { resolveMcpServer } from "./primitives/mcp.js";
-import { describeSource, normalizeRef, sourceHost, sourceKey, sourceOwner } from "./refs.js";
+import { parseSettingsFragment } from "./primitives/settings.js";
+import {
+  describeSource,
+  normalizeRef,
+  parseRefString,
+  sourceHost,
+  sourceKey,
+  sourceOwner,
+} from "./refs.js";
 import { selectProvider, type SourceProvider } from "./sources/index.js";
-import { checkTree, scanTextForHiddenUnicode } from "./verify.js";
+import {
+  checkExecutableHarness,
+  checkTree,
+  scanTextForHiddenUnicode,
+  summarizeHarness,
+} from "./verify.js";
 import type {
   AuthResolver,
+  BundleRefEntry,
   EventSink,
   InstructionRefEntry,
   NamedMcpServer,
   NormalizedRef,
   Primitive,
+  ResolvedBundle,
   ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
+  ResolvedSettings,
   ResolvedSkill,
   Resolution,
   PrimitiveRef,
   PrimitiveSource,
+  SettingsRefEntry,
   OutfitterWarning,
 } from "./types.js";
 
@@ -42,6 +67,8 @@ export interface ResolverOptions {
   refs: NormalizedRef[];
   mcp: NamedMcpServer[];
   instructions: InstructionRefEntry[];
+  bundles: BundleRefEntry[];
+  settings: SettingsRefEntry[];
   policy: ResolvedPolicy;
   cacheDir: string;
   root: string;
@@ -78,6 +105,8 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
   const skills = new Map<string, ResolvedSkill>();
   const mcp = new Map<string, ResolvedMcpServer>();
   const instructions = new Map<string, ResolvedInstruction>();
+  const bundles = new Map<string, ResolvedBundle>();
+  const settings = new Map<string, ResolvedSettings>();
   const unsupported: Primitive[] = [];
 
   // Memoized per source so a monorepo referenced by ten skills is fetched once.
@@ -242,10 +271,177 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     }
   };
 
+  /**
+   * Scan text destined for the agent's context, or for a shell, for hidden
+   * characters. Shares the skill-tree rule: deny throws, warn reports.
+   */
+  const scanText = (label: string, name: string, text: string, file: string): void => {
+    if (policy.scan === "off") return;
+    const findings = scanTextForHiddenUnicode(text, file);
+    if (findings.length === 0) return;
+    const summary = findings
+      .slice(0, 5)
+      .map((f) => `${f.file}:${f.line}:${f.column} ${f.codePoint} (${f.label})`)
+      .join(", ");
+    if (policy.scan === "deny") {
+      throw new PolicyViolationError(
+        `${label} "${name}" contains hidden Unicode characters and policy.scan is "deny": ${summary}`,
+        { name, findings },
+      );
+    }
+    warn({
+      code: "hidden-unicode",
+      subject: name,
+      message:
+        `${label} "${name}" contains ${findings.length} hidden Unicode character(s): ${summary}`,
+      detail: { findings },
+    });
+  };
+
+  /** Resolve a source declared by the manifest, dropping any inline token. */
+  const sourceForEntry = (
+    ref: string,
+    authRef: BundleRefEntry["auth"],
+  ): PrimitiveSource => {
+    const { source } = parseRefString(ref, {
+      root: options.root,
+      ...(authRef ? { auth: authRef } : {}),
+    });
+    return source;
+  };
+
+  /** A token supplied inline must not survive into the resolution graph. */
+  const withoutInlineToken = (source: PrimitiveSource): PrimitiveSource => {
+    if (source.type !== "git" || !source.auth || !("token" in source.auth)) return source;
+    const copy = { ...source };
+    delete copy.auth;
+    return copy;
+  };
+
+  /**
+   * Resolve one declared bundle.
+   *
+   * Always `declaredBy: "manifest"`: there is no path by which a fetched source
+   * can declare a bundle, deliberately. A skill's frontmatter can pull in another
+   * skill, an MCP server, or an instruction fragment, all of which are gated by
+   * policy. A bundle writes wherever it likes under the root, so rather than gate
+   * a transitive form of it, there is no transitive form.
+   */
+  const resolveBundleEntry = async (entry: BundleRefEntry): Promise<void> => {
+    const source = sourceForEntry(entry.ref, entry.auth);
+    assertSourceAllowed(source, policy);
+    const origin = describeSource(source);
+    const name = entry.name ?? bundleNameFromSource(source);
+
+    if (bundles.has(name)) {
+      throw new SourceResolutionError(
+        `Two bundles resolve to the name "${name}". Give one of them an explicit "name" so their ` +
+          `lockfile entries stay distinct.`,
+        { name, origin },
+      );
+    }
+
+    const { tree, revision } = await materialize({ source });
+    const subdir = source.type === "git" ? (source.subdir ?? "") : "";
+    const base = source.type === "local" ? source.path : subdir ? join(tree, subdir) : tree;
+
+    const staged = await stageBundle(base, entry.paths, origin);
+    emit({ type: "bundle:fetched", name, commit: revision, stagedDir: base });
+
+    const check = await checkTree("Bundle", name, base, staged.files, policy);
+    for (const w of check.warnings) warn(w);
+
+    bundles.set(name, {
+      name,
+      source: withoutInlineToken(source),
+      ref: source.type === "git" ? (source.ref ?? "") : "",
+      commit: revision,
+      subdir,
+      contentHash: staged.contentHash,
+      pathHashes: staged.pathHashes,
+      stagedDir: base,
+      files: staged.files,
+      paths: normalizeBundlePaths(entry.paths),
+      declaredBy: "manifest",
+      trusted: true,
+    });
+  };
+
+  /**
+   * Resolve one settings fragment: a JSON file from a source, or an inline object.
+   *
+   * Manifest-declared only, for the same reason as bundles. A fragment can
+   * register hooks and pre-approve tools, so letting a fetched repository add one
+   * would hand it the keys to the harness it was installed into.
+   */
+  const resolveSettingsEntry = async (entry: SettingsRefEntry): Promise<void> => {
+    if (entry.settings) {
+      const name = entry.name!;
+      const content = JSON.stringify(entry.settings);
+      scanText("Settings fragment", name, content, name);
+      settings.set(name, {
+        name,
+        settings: entry.settings,
+        source: { type: "local", path: options.root },
+        ref: "",
+        commit: "",
+        subdir: "",
+        contentHash: hashCanonicalJson(entry.settings),
+        inline: true,
+        declaredBy: "manifest",
+        trusted: true,
+      });
+      return;
+    }
+
+    const source = sourceForEntry(entry.ref!, entry.auth);
+    assertSourceAllowed(source, policy);
+    const origin = describeSource(source);
+    const { tree, revision } = await materialize({ source });
+    const subdir = source.type === "git" ? (source.subdir ?? "") : "";
+    const base = source.type === "local" ? source.path : tree;
+    const file = subdir ? resolvePath(base, subdir) : base;
+
+    const content = await readTextFile(file).catch(() => {
+      throw new SourceResolutionError(
+        `No settings fragment at ${origin}. Expected a JSON file.`,
+        { origin, subdir },
+      );
+    });
+    const name = entry.name ?? basename(file).replace(/\.json$/i, "");
+    scanText("Settings fragment", name, content, subdir || basename(file));
+
+    settings.set(name, {
+      name,
+      settings: parseSettingsFragment(content, origin),
+      source: withoutInlineToken(source),
+      ref: source.type === "git" ? (source.ref ?? "") : "",
+      commit: revision,
+      subdir,
+      contentHash: hashString(content),
+      inline: false,
+      declaredBy: "manifest",
+      trusted: true,
+    });
+  };
+
   // Manifest-declared instruction fragments, resolved before the skill walk so a
   // skill that names the same fragment loses the conflict to the operator.
   for (const entry of options.instructions) {
     await resolveInstructionEntry(entry, "manifest");
+  }
+
+  // Bundles and settings are resolved before the skill walk so that a harness the
+  // policy refuses fails the call before anything else is fetched.
+  for (const entry of options.bundles) await resolveBundleEntry(entry);
+  assertBundleDestinationsDistinct(bundles.values());
+  for (const entry of options.settings) await resolveSettingsEntry(entry);
+
+  for (const w of checkExecutableHarness(
+    summarizeHarness([...bundles.values()], [...settings.values()]),
+    policy,
+  )) {
+    warn(w);
   }
 
   let queue: QueueItem[] = refs.map((ref) => ({
@@ -302,7 +498,7 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
         const { contentHash } = await hashTree(found.dir, files);
         emit({ type: "skill:fetched", name: found.name, commit: revision, stagedDir: found.dir });
 
-        const check = await checkTree(found.name, found.dir, files, policy);
+        const check = await checkTree("Skill", found.name, found.dir, files, policy);
         for (const w of check.warnings) warn(w);
         emit({ type: "skill:verified", name: found.name, contentHash });
 
@@ -385,10 +581,12 @@ export const resolveGraph = async (options: ResolverOptions): Promise<Resolution
     skills: skills.size,
     mcp: mcp.size,
     instructions: instructions.size,
+    bundles: bundles.size,
+    settings: settings.size,
     warnings: warnings.length,
   });
 
-  return { order, skills, mcp, instructions, warnings, unsupported };
+  return { order, skills, mcp, instructions, bundles, settings, warnings, unsupported };
 };
 
 /**

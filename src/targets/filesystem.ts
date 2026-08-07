@@ -10,10 +10,13 @@ import { join } from "node:path";
 
 import { ensureDir } from "../fsutil.js";
 import {
+  installedBundleHash,
   installedHash,
+  materializeBundlePaths,
   materializeToDir,
   removeInstructionsFromFile,
   resolveAgainstRoot,
+  unmaterializeBundlePaths,
   unmaterializeFromDir,
   writeInstructionFile,
 } from "./base.js";
@@ -25,6 +28,8 @@ import {
 } from "./mcp-config.js";
 import type {
   AgentTarget,
+  BundleMaterializeInput,
+  BundleMaterializeOutput,
   InstructionWriteInput,
   InstructionWriteOutput,
   MaterializeInput,
@@ -32,6 +37,7 @@ import type {
   McpWriteInput,
   McpWriteOutput,
   PrimitiveKind,
+  ResolvedBundle,
   TargetContext,
 } from "../types.js";
 
@@ -53,7 +59,13 @@ export const filesystemTarget = (options: FilesystemTargetOptions): AgentTarget 
 
   return {
     name: options.name ?? "filesystem",
-    supports: ["skill", "mcp", "instruction"],
+    /**
+     * `settings` is absent deliberately: `.claude/settings.json` is one harness's
+     * schema, not a general shape, so a generic target has nothing correct to do
+     * with it. The manager reports it as unwritable for this target rather than
+     * inventing a location.
+     */
+    supports: ["skill", "mcp", "instruction", "bundle"],
 
     resolveDir(kind: PrimitiveKind, ctx: TargetContext): string {
       if (kind === "mcp") return join(dirFor(ctx), mcpFile);
@@ -98,6 +110,26 @@ export const filesystemTarget = (options: FilesystemTargetOptions): AgentTarget 
 
     async removeInstructions(names: string[], ctx: TargetContext): Promise<void> {
       await removeInstructionsFromFile(instructionPath(ctx), names);
+    },
+
+    async materializeBundle(input: BundleMaterializeInput): Promise<BundleMaterializeOutput> {
+      const dir = dirFor(input.ctx);
+      await ensureDir(dir);
+      return materializeBundlePaths(input, (dest) => join(dir, dest));
+    },
+
+    async currentBundleHash(
+      bundle: ResolvedBundle,
+      ctx: TargetContext,
+    ): Promise<string | undefined> {
+      return installedBundleHash(bundle, (dest) => join(dirFor(ctx), dest));
+    },
+
+    async unmaterializeBundle(
+      paths: Record<string, string>,
+      ctx: TargetContext,
+    ): Promise<void> {
+      await unmaterializeBundlePaths(paths, (dest) => join(dirFor(ctx), dest));
     },
 
     async removeMcpServers(names: string[], ctx: TargetContext): Promise<void> {

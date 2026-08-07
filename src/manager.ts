@@ -21,19 +21,30 @@ import { hashString, hashTree } from "./hash.js";
 import { isDirectory, listFiles, pathExists, readTextFile } from "./fsutil.js";
 import {
   emptyLockfile,
+  emptyLockTarget,
   lockSourceToPrimitiveSource,
   readLockfile,
   primitiveSourceToLockSource,
   writeLockfile,
   type Lockfile,
+  type LockBundle,
   type LockInstruction,
   type LockMcp,
+  type LockSettings,
   type LockSkill,
   type LockTarget,
 } from "./lockfile.js";
 import { lockfilePath as lockfilePathFor } from "./lockfile.js";
 import { isSourceEntry, loadManifest, writeManifest, type LoadedManifest } from "./manifest.js";
+import { bundleNameFromSource, stageBundle } from "./primitives/bundle.js";
 import { readRegion } from "./primitives/instruction.js";
+import {
+  parseSettingsDocument,
+  parseSettingsFragment,
+  settingsProjectionHash,
+  subtractOwnedSettings,
+  unionOwnedSettings,
+} from "./primitives/settings.js";
 import { normalizeInstructionEntries } from "./primitives/skill.js";
 import { defaultCacheDir } from "./paths.js";
 import { resolvePolicy } from "./policy.js";
@@ -45,6 +56,7 @@ import { resolveTarget } from "./targets/index.js";
 import { checkTree } from "./verify.js";
 import type {
   AuthResolver,
+  BundleRefEntry,
   InstallResult,
   InstructionRefEntry,
   InstalledPrimitive,
@@ -52,13 +64,17 @@ import type {
   ManifestSourceEntry,
   NamedMcpServer,
   NormalizedRef,
+  OwnedSettings,
+  ResolvedBundle,
   ResolvedInstruction,
   ResolvedMcpServer,
   ResolvedPolicy,
+  ResolvedSettings,
   ResolvedSkill,
   Resolution,
   OutfitterEvent,
   PrimitiveRef,
+  SettingsRefEntry,
   AgentTarget,
   OutfitterWarning,
   TargetContext,
@@ -99,9 +115,13 @@ export interface ResolveInput {
   mcp?: NamedMcpServer[];
   /** Extra instruction fragments, treated as manifest-declared (trusted). */
   instructions?: (string | InstructionRefEntry)[];
+  /** Extra bundles, treated as manifest-declared (trusted). */
+  bundles?: BundleRefEntry[];
+  /** Extra settings fragments, treated as manifest-declared (trusted). */
+  settings?: SettingsRefEntry[];
   targets?: (AgentTarget | string)[];
   policy?: TrustPolicy;
-  /** Resolve only `refs`, `mcp`, and `instructions`, ignoring the manifest. */
+  /** Resolve only the inline primitives, ignoring the manifest. */
   ignoreManifest?: boolean;
 }
 
@@ -288,11 +308,21 @@ class AgentManagerImpl implements AgentManager {
       ...(input.ignoreManifest ? [] : (manifest.instructions ?? [])),
       ...(input.instructions ?? []),
     ]);
+    const bundles = [
+      ...(input.ignoreManifest ? [] : (manifest.bundles ?? [])),
+      ...(input.bundles ?? []),
+    ];
+    const settings = [
+      ...(input.ignoreManifest ? [] : (manifest.settings ?? [])),
+      ...(input.settings ?? []),
+    ];
 
     return resolveGraph({
       refs,
       mcp,
       instructions,
+      bundles,
+      settings,
       policy: await this.policyFor(input.policy),
       cacheDir: this.cacheDir,
       root: this.root,
@@ -352,6 +382,20 @@ class AgentManagerImpl implements AgentManager {
         });
       }
     }
+
+    // Bundles get the same test, and want it more: a bundle is executable code
+    // installed at paths the harness invokes automatically.
+    for (const [name, bundle] of resolution.bundles) {
+      const locked = previous.bundles[name];
+      if (!locked || !locked.commit || locked.commit !== bundle.commit) continue;
+      if (locked.contentHash !== bundle.contentHash) {
+        throw new HashMismatchError(name, locked.contentHash, bundle.contentHash, {
+          commit: bundle.commit,
+          primitive: "bundle",
+          reason: "same commit, different content",
+        });
+      }
+    }
   }
 
   /** The shared write path behind `install()` and `sync()`. */
@@ -371,6 +415,67 @@ class AgentManagerImpl implements AgentManager {
 
     const installed: InstalledPrimitive[] = [];
     const skipped: InstalledPrimitive[] = [];
+
+    /**
+     * Bundles first, before any skill.
+     *
+     * A committed harness's skills shell out to its engine: AI-DLC's 42 skills all
+     * invoke `.claude/tools/aidlc-orchestrate.ts`. Installing the skills first
+     * leaves a window in which an agent can discover a skill whose engine is not
+     * there yet, and the failure that produces looks like a broken skill rather
+     * than an incomplete install.
+     */
+    const bundles = [...resolution.bundles.values()].filter((bundle) => bundle.trusted);
+
+    for (const target of targets) {
+      if (!target.materializeBundle) {
+        if (bundles.length > 0) {
+          ctx.warn({
+            code: "target-config",
+            subject: target.name,
+            message:
+              `Target "${target.name}" cannot install bundles, so ` +
+              `${bundles.map((b) => b.name).join(", ")} ${bundles.length === 1 ? "was" : "were"} ` +
+              `not installed for it.`,
+          });
+        }
+        continue;
+      }
+
+      const bundleRoot = bundles.length > 0 ? await target.resolveDir("bundle", ctx) : "";
+
+      for (const bundle of bundles) {
+        const existing = args.force
+          ? undefined
+          : await target.currentBundleHash?.(bundle, ctx).catch(() => undefined);
+
+        if (!args.force && existing === bundle.contentHash) {
+          const paths = declaredBundlePaths(bundle, bundleRoot);
+          skipped.push(installedBundleEntry(bundle, target.name, bundleRoot, paths));
+          ctx.emit({ type: "bundle:skipped", name: bundle.name, target: target.name, paths });
+          continue;
+        }
+
+        if (dryRun) {
+          const paths = declaredBundlePaths(bundle, bundleRoot);
+          installed.push(installedBundleEntry(bundle, target.name, bundleRoot, paths));
+          continue;
+        }
+
+        const output = await target.materializeBundle({
+          bundle,
+          stagedDir: bundle.stagedDir,
+          ctx,
+        });
+        installed.push(installedBundleEntry(bundle, target.name, bundleRoot, output.paths));
+        ctx.emit({
+          type: "bundle:materialized",
+          name: bundle.name,
+          target: target.name,
+          paths: output.paths,
+        });
+      }
+    }
 
     const order = resolution.order.filter((name) => selected.has(name));
 
@@ -492,10 +597,75 @@ class AgentManagerImpl implements AgentManager {
       }
     }
 
+    /**
+     * Settings last.
+     *
+     * A settings fragment points at things: a hook command, a status line, a
+     * `permissions.allow` entry for a tool a bundle provides. Registering them
+     * before the files they name exist would leave a window in which every hook
+     * the harness fires refers to something absent.
+     */
+    const settingsFragments = [...resolution.settings.values()].filter((s) => s.trusted);
+    const settingsPaths = new Map<string, string>();
+    const settingsWritten = new Map<string, string[]>();
+    const settingsOwned = new Map<string, Record<string, OwnedSettings>>();
+
+    for (const target of targets) {
+      if (!target.writeSettings) {
+        if (settingsFragments.length > 0) {
+          ctx.warn({
+            code: "target-config",
+            subject: target.name,
+            message:
+              `Target "${target.name}" cannot merge settings, so ` +
+              `${settingsFragments.map((s) => s.name).join(", ")} ` +
+              `${settingsFragments.length === 1 ? "was" : "were"} not written for it.`,
+          });
+        }
+        continue;
+      }
+      const previouslyManaged = unionOwnedSettings(
+        Object.values(previous.targets[target.name]?.settings ?? {}),
+      );
+      if (dryRun) {
+        settingsWritten.set(
+          target.name,
+          settingsFragments.map((s) => s.name),
+        );
+        for (const fragment of settingsFragments) {
+          installed.push(
+            installedSettingsEntry(
+              fragment,
+              target.name,
+              await target.resolveDir("settings", ctx),
+            ),
+          );
+        }
+        continue;
+      }
+      const result = await target.writeSettings({
+        settings: settingsFragments,
+        previouslyManaged,
+        ctx,
+      });
+      settingsPaths.set(target.name, result.path);
+      settingsWritten.set(target.name, result.written);
+      settingsOwned.set(target.name, result.owned);
+      for (const name of result.written) {
+        const fragment = resolution.settings.get(name);
+        if (fragment) installed.push(installedSettingsEntry(fragment, target.name, result.path));
+        ctx.emit({ type: "settings:written", name, target: target.name, path: result.path });
+      }
+    }
+
     const orphans = args.preserveUnselected
       ? []
       : Object.keys(previous.skills).filter((name) => !resolution.skills.has(name));
-    if (orphans.length > 0) {
+    const bundleOrphans = args.preserveUnselected
+      ? []
+      : Object.keys(previous.bundles).filter((name) => !resolution.bundles.has(name));
+
+    if (orphans.length > 0 || bundleOrphans.length > 0) {
       if (args.prune && !dryRun) {
         for (const target of targets) {
           for (const name of orphans) {
@@ -503,15 +673,22 @@ class AgentManagerImpl implements AgentManager {
             const path = previous.targets[target.name]?.skills[name];
             if (path) ctx.emit({ type: "skill:removed", name, target: target.name, path });
           }
+          for (const name of bundleOrphans) {
+            const paths = previous.targets[target.name]?.bundles[name];
+            if (!paths) continue;
+            await target.unmaterializeBundle?.(paths, ctx);
+            ctx.emit({ type: "bundle:removed", name, target: target.name, paths });
+          }
         }
       } else {
+        const all = [...orphans, ...bundleOrphans];
         ctx.warn({
           code: "manifest",
           message:
-            `${orphans.join(", ")} ${orphans.length === 1 ? "is" : "are"} still installed but no ` +
+            `${all.join(", ")} ${all.length === 1 ? "is" : "are"} still installed but no ` +
             `longer resolved from the manifest. Files were left in place. Call remove(), or ` +
             `install({ prune: true }), to delete them.`,
-          detail: { orphans },
+          detail: { orphans, bundles: bundleOrphans },
         });
       }
     }
@@ -527,10 +704,14 @@ class AgentManagerImpl implements AgentManager {
       mcpWritten,
       instructionPaths,
       instructionsWritten,
+      settingsPaths,
+      settingsWritten,
+      settingsOwned,
       preserveUnselected: args.preserveUnselected,
       // Orphans that were only warned about are still on disk, so they stay in
       // the lockfile: it records what is installed, not what was last resolved.
       carryForward: args.prune && !dryRun ? [] : orphans,
+      carryForwardBundles: args.prune && !dryRun ? [] : bundleOrphans,
     });
 
     let lockfileOut = this.lockfilePath;
@@ -546,6 +727,8 @@ class AgentManagerImpl implements AgentManager {
       skipped,
       mcp: trustedMcp,
       instructions: trustedInstructions,
+      bundles,
+      settings: settingsFragments,
       warnings,
       lockfilePath: lockfileOut,
       dryRun,
@@ -563,14 +746,20 @@ class AgentManagerImpl implements AgentManager {
     mcpWritten: Map<string, string[]>;
     instructionPaths: Map<string, string>;
     instructionsWritten: Map<string, string[]>;
+    settingsPaths: Map<string, string>;
+    settingsWritten: Map<string, string[]>;
+    settingsOwned: Map<string, Record<string, OwnedSettings>>;
     preserveUnselected: boolean;
     carryForward: string[];
+    carryForwardBundles: string[];
   }): Lockfile {
     const next = emptyLockfile();
 
     if (args.preserveUnselected) {
       next.skills = { ...args.previous.skills };
       next.mcp = { ...args.previous.mcp };
+      next.bundles = { ...args.previous.bundles };
+      next.settings = { ...args.previous.settings };
       next.targets = structuredClone(args.previous.targets);
     } else {
       for (const name of args.carryForward) {
@@ -580,14 +769,22 @@ class AgentManagerImpl implements AgentManager {
         for (const [targetName, targetEntry] of Object.entries(args.previous.targets)) {
           const path = targetEntry.skills[name];
           if (!path) continue;
-          const carried = (next.targets[targetName] ??= {
-            skills: {},
-            mcp: [],
-            instructions: [],
-          });
+          const carried = (next.targets[targetName] ??= emptyLockTarget());
           carried.skills[name] = path;
           const id = targetEntry.skillIds?.[name];
           if (id) (carried.skillIds ??= {})[name] = id;
+        }
+      }
+      // A bundle left on disk stays in the lockfile for the same reason a skill
+      // does: the file records what is installed, not what was last resolved.
+      for (const name of args.carryForwardBundles) {
+        const entry = args.previous.bundles[name];
+        if (!entry) continue;
+        next.bundles[name] = entry;
+        for (const [targetName, targetEntry] of Object.entries(args.previous.targets)) {
+          const paths = targetEntry.bundles[name];
+          if (!paths) continue;
+          (next.targets[targetName] ??= emptyLockTarget()).bundles[name] = paths;
         }
       }
     }
@@ -608,16 +805,27 @@ class AgentManagerImpl implements AgentManager {
       next.instructions[instruction.name] = toLockInstruction(instruction);
     }
 
+    for (const bundle of args.resolution.bundles.values()) {
+      if (!bundle.trusted) continue;
+      next.bundles[bundle.name] = toLockBundle(bundle);
+    }
+
+    for (const fragment of args.resolution.settings.values()) {
+      if (!fragment.trusted) continue;
+      next.settings[fragment.name] = toLockSettings(fragment);
+    }
+
     for (const target of args.targets) {
-      const entry: LockTarget = next.targets[target.name] ?? {
-        skills: {},
-        mcp: [],
-        instructions: [],
-      };
+      const entry: LockTarget = next.targets[target.name] ?? emptyLockTarget();
       const skillIds: Record<string, string> = { ...entry.skillIds };
 
       for (const record of [...args.installed, ...args.skipped]) {
         if (record.target !== target.name) continue;
+        if (record.kind === "bundle") {
+          if (record.paths) entry.bundles[record.name] = record.paths;
+          continue;
+        }
+        if (record.kind !== "skill") continue;
         entry.skills[record.name] = record.path;
         if (record.skillId) skillIds[record.name] = record.skillId;
       }
@@ -636,10 +844,30 @@ class AgentManagerImpl implements AgentManager {
         entry.instructionPath = instructionPath;
       }
 
-      // Drop skills that are gone from the graph unless this was a partial install.
+      const settingsFor = args.settingsWritten.get(target.name);
+      const ownedFor = args.settingsOwned.get(target.name);
+      if (settingsFor) {
+        // Ownership is recorded per fragment, not as one union, so removing one
+        // fragment can unwind exactly its own keys and leave the rest standing.
+        entry.settings = {};
+        for (const name of settingsFor) {
+          const owned = ownedFor?.[name];
+          if (owned) entry.settings[name] = owned;
+        }
+      }
+      const settingsPath = args.settingsPaths.get(target.name);
+      if (settingsPath && settingsFor && settingsFor.length > 0) {
+        entry.settingsPath = settingsPath;
+      }
+
+      // Drop skills and bundles that are gone from the graph unless this was a
+      // partial install.
       if (!args.preserveUnselected) {
         for (const name of Object.keys(entry.skills)) {
           if (!next.skills[name]) delete entry.skills[name];
+        }
+        for (const name of Object.keys(entry.bundles)) {
+          if (!next.bundles[name]) delete entry.bundles[name];
         }
       }
 
@@ -782,7 +1010,7 @@ class AgentManagerImpl implements AgentManager {
       }
       this.emit({ type: "skill:verified", name, contentHash });
 
-      const check = await checkTree(name, dir, files, policy);
+      const check = await checkTree("Skill", name, dir, files, policy);
       for (const warning of check.warnings) {
         warnings.push(warning);
         this.emit({ type: "warning", warning });
@@ -848,11 +1076,112 @@ class AgentManagerImpl implements AgentManager {
       });
     }
 
+    // Bundles replay exactly like skills: re-fetch at the pinned commit, re-hash
+    // the declared subtrees, and refuse anything that no longer matches.
+    const bundles = new Map<string, ResolvedBundle>();
+    for (const [name, entry] of Object.entries(lock.bundles)) {
+      const source = lockSourceToPrimitiveSource(entry.source);
+      const provider = selectProvider(source, this.providers);
+      const token = await this.tokenForLockedSource(source);
+      const treeRoot = await provider.materializeTree(source, entry.commit, {
+        cacheDir: this.cacheDir,
+        onRetry: (info) => this.emit({ type: "source:retry", source, ...info }),
+        ...(token ? { token } : {}),
+      });
+      const subdir = source.type === "git" ? (source.subdir ?? "") : "";
+      const base =
+        source.type === "local" ? source.path : subdir ? resolvePath(treeRoot, subdir) : treeRoot;
+
+      const tree = await stageBundle(base, entry.paths, describeSource(source));
+      this.emit({ type: "bundle:fetched", name, commit: entry.commit, stagedDir: base });
+
+      if (tree.contentHash !== entry.contentHash && policy.requireLockHashMatch !== false) {
+        throw new HashMismatchError(name, entry.contentHash, tree.contentHash, {
+          commit: entry.commit,
+          primitive: "bundle",
+        });
+      }
+
+      const check = await checkTree("Bundle", name, base, tree.files, policy);
+      for (const warning of check.warnings) {
+        warnings.push(warning);
+        this.emit({ type: "warning", warning });
+      }
+
+      bundles.set(name, {
+        name,
+        source,
+        ref: entry.ref,
+        commit: entry.commit,
+        subdir,
+        contentHash: tree.contentHash,
+        pathHashes: tree.pathHashes,
+        stagedDir: base,
+        files: tree.files,
+        paths: entry.paths,
+        declaredBy: entry.declaredBy,
+        trusted: entry.trusted,
+      });
+    }
+
+    const settings = new Map<string, ResolvedSettings>();
+    for (const [name, entry] of Object.entries(lock.settings)) {
+      if (entry.inline) {
+        // Nothing to fetch: the lockfile carries the fragment itself.
+        settings.set(name, {
+          name,
+          settings: parseSettingsFragment(entry.content ?? "{}", `lockfile entry "${name}"`),
+          source: lockSourceToPrimitiveSource(entry.source),
+          ref: entry.ref,
+          commit: entry.commit,
+          subdir: entry.subdir,
+          contentHash: entry.contentHash,
+          inline: true,
+          declaredBy: entry.declaredBy,
+          trusted: entry.trusted,
+        });
+        continue;
+      }
+
+      const source = lockSourceToPrimitiveSource(entry.source);
+      const provider = selectProvider(source, this.providers);
+      const token = await this.tokenForLockedSource(source);
+      const treeRoot = await provider.materializeTree(source, entry.commit, {
+        cacheDir: this.cacheDir,
+        onRetry: (info) => this.emit({ type: "source:retry", source, ...info }),
+        ...(token ? { token } : {}),
+      });
+      const base = source.type === "local" ? source.path : treeRoot;
+      const file = entry.subdir ? resolvePath(base, entry.subdir) : base;
+      const content = await readTextFile(file);
+      const contentHash = hashString(content);
+      if (contentHash !== entry.contentHash && policy.requireLockHashMatch !== false) {
+        throw new HashMismatchError(name, entry.contentHash, contentHash, {
+          commit: entry.commit,
+          primitive: "settings",
+        });
+      }
+      settings.set(name, {
+        name,
+        settings: parseSettingsFragment(content, describeSource(source)),
+        source,
+        ref: entry.ref,
+        commit: entry.commit,
+        subdir: entry.subdir,
+        contentHash,
+        inline: false,
+        declaredBy: entry.declaredBy,
+        trusted: entry.trusted,
+      });
+    }
+
     return {
       order: topologicalOrder(skills),
       skills,
       mcp,
       instructions,
+      bundles,
+      settings,
       warnings,
       unsupported: [],
     };
@@ -897,6 +1226,44 @@ class AgentManagerImpl implements AgentManager {
           ...(skillId ? { skillId } : {}),
         });
       }
+
+      for (const [name, entry] of Object.entries(lock.bundles)) {
+        const paths = targetEntry?.bundles[name];
+        if (!paths) continue;
+        // A bundle is present when every destination it claims is.
+        const destinations = Object.values(paths);
+        const present =
+          destinations.length > 0 &&
+          (await Promise.all(destinations.map((p) => pathExists(p)))).every(Boolean);
+        if (!present && !opts.includeMissing) continue;
+        out.push({
+          name,
+          kind: "bundle",
+          target: target.name,
+          path: await target.resolveDir("bundle", ctx),
+          paths,
+          source: lockSourceToPrimitiveSource(entry.source),
+          ref: entry.ref,
+          commit: entry.commit,
+          contentHash: entry.contentHash,
+        });
+      }
+
+      const settingsPath = targetEntry?.settingsPath;
+      for (const [name, entry] of Object.entries(lock.settings)) {
+        if (!targetEntry?.settings[name]) continue;
+        if (settingsPath && !(await pathExists(settingsPath)) && !opts.includeMissing) continue;
+        out.push({
+          name,
+          kind: "settings",
+          target: target.name,
+          path: settingsPath ?? (await target.resolveDir("settings", ctx)),
+          source: lockSourceToPrimitiveSource(entry.source),
+          ref: entry.ref,
+          commit: entry.commit,
+          contentHash: entry.contentHash,
+        });
+      }
     }
 
     return out.sort((a, b) =>
@@ -926,6 +1293,58 @@ class AgentManagerImpl implements AgentManager {
     const warnings: OutfitterWarning[] = [];
     const ctx = this.context(warnings);
     const targets = await this.targetsForList(opts.targets, lock);
+
+    // `name` may address a bundle rather than a skill: delete its trees, and the
+    // settings fragments that came with it stay, since a fragment is named
+    // separately and removed separately.
+    if (!lock.skills[name] && lock.bundles[name]) {
+      if (!opts.dryRun) {
+        for (const target of targets) {
+          const paths = lock.targets[target.name]?.bundles[name];
+          if (!paths) continue;
+          await target.unmaterializeBundle?.(paths, ctx);
+          this.emit({ type: "bundle:removed", name, target: target.name, paths });
+        }
+      }
+      delete lock.bundles[name];
+      for (const entry of Object.values(lock.targets)) delete entry.bundles[name];
+      if (!opts.dryRun) await writeLockfile(this.root, lock);
+      if (!opts.keepManifest) await this.removeBundleFromManifest(name, ctx, opts.dryRun === true);
+      return;
+    }
+
+    // `name` may address a settings fragment. Only the keys that fragment owns
+    // are unwound; a key another fragment or the user also holds stays put.
+    if (!lock.skills[name] && lock.settings[name]) {
+      if (!opts.dryRun) {
+        for (const target of targets) {
+          const recorded = lock.targets[target.name]?.settings ?? {};
+          const owned = recorded[name];
+          if (!owned || !target.removeSettings) continue;
+          // Anything a surviving fragment also owns stays: two fragments may
+          // legitimately declare the same key, and both are recorded as holding it.
+          const retained = unionOwnedSettings(
+            Object.entries(recorded)
+              .filter(([other]) => other !== name)
+              .map(([, keys]) => keys),
+          );
+          await target.removeSettings({
+            names: [name],
+            previouslyManaged: subtractOwnedSettings(owned, retained),
+            ctx,
+          });
+          const path = lock.targets[target.name]?.settingsPath;
+          if (path) this.emit({ type: "settings:removed", name, target: target.name, path });
+        }
+      }
+      delete lock.settings[name];
+      for (const entry of Object.values(lock.targets)) delete entry.settings[name];
+      if (!opts.dryRun) await writeLockfile(this.root, lock);
+      if (!opts.keepManifest) {
+        await this.removeSettingsFromManifest(name, ctx, opts.dryRun === true);
+      }
+      return;
+    }
 
     // `name` may address an instruction fragment rather than a skill.
     if (!lock.skills[name] && lock.instructions[name]) {
@@ -1014,6 +1433,70 @@ class AgentManagerImpl implements AgentManager {
 
     if (opts.keepManifest) return;
     await this.removeFromManifest(name, ctx, opts.dryRun === true);
+  }
+
+  /** Drop the manifest entry that declared a bundle, so install() will not re-add it. */
+  private async removeBundleFromManifest(
+    name: string,
+    ctx: TargetContext,
+    dryRun: boolean,
+  ): Promise<void> {
+    await this.editManifest(name, ctx, dryRun, (manifest) => {
+      const bundles = manifest.bundles ?? [];
+      const remaining = bundles.filter(
+        (entry) =>
+          (entry.name ??
+            bundleNameFromSource(parseRefString(entry.ref, { root: this.root }).source)) !== name,
+      );
+      return remaining.length === bundles.length ? undefined : { ...manifest, bundles: remaining };
+    });
+  }
+
+  private async removeSettingsFromManifest(
+    name: string,
+    ctx: TargetContext,
+    dryRun: boolean,
+  ): Promise<void> {
+    await this.editManifest(name, ctx, dryRun, (manifest) => {
+      const settings = manifest.settings ?? [];
+      const remaining = settings.filter((entry) => settingsEntryName(entry) !== name);
+      return remaining.length === settings.length
+        ? undefined
+        : { ...manifest, settings: remaining };
+    });
+  }
+
+  /**
+   * Apply an edit to the manifest, or explain why it could not be applied.
+   *
+   * A TypeScript config holds live objects and is never rewritten, so the honest
+   * outcome there is a warning naming the file: silence would leave the operator
+   * with a lockfile and a manifest that disagree.
+   */
+  private async editManifest(
+    name: string,
+    ctx: TargetContext,
+    dryRun: boolean,
+    edit: (manifest: Manifest) => Manifest | undefined,
+  ): Promise<void> {
+    const loaded = await this.manifest();
+    if (!loaded.path) return;
+    if (!loaded.writable) {
+      ctx.warn({
+        code: "manifest",
+        subject: name,
+        message:
+          `Removed "${name}" from the lockfile and targets, but ${loaded.path} is a TypeScript ` +
+          `config and cannot be edited automatically. Delete the entry by hand or the next ` +
+          `install() will reinstall it.`,
+        detail: { path: loaded.path },
+      });
+      return;
+    }
+    const updated = edit(loaded.manifest);
+    if (!updated) return;
+    if (!dryRun) await writeManifest(loaded.path, updated);
+    this.manifestCache = { ...loaded, manifest: updated };
   }
 
   private async removeFromManifest(
@@ -1153,7 +1636,7 @@ class AgentManagerImpl implements AgentManager {
         }
 
         if (opts.scan !== false) {
-          const check = await checkTree(name, path, files, {
+          const check = await checkTree("Skill", name, path, files, {
             ...policy,
             // Report, never throw: verify() answers a question, it does not gate.
             scripts: policy.scripts === "deny" ? "warn" : policy.scripts,
@@ -1223,6 +1706,97 @@ class AgentManagerImpl implements AgentManager {
             message:
               `The managed region for "${name}" in ${path} was edited in place. sync() will ` +
               `restore the pinned fragment.`,
+          });
+        }
+      }
+    }
+
+    /**
+     * A bundle's proof is its destination trees, re-hashed against the per-path
+     * hashes the lockfile pinned. Checked per path rather than in aggregate so the
+     * report names the directory that drifted, not just the bundle.
+     */
+    for (const target of targets) {
+      const targetEntry = lock.targets[target.name];
+      for (const [name, entry] of Object.entries(lock.bundles)) {
+        const paths = targetEntry?.bundles[name];
+        if (!paths) continue;
+        for (const [sourcePath, dest] of Object.entries(paths)) {
+          checked += 1;
+          if (!(await isDirectory(dest))) {
+            issues.push({
+              kind: "missing",
+              primitive: "bundle",
+              name,
+              target: target.name,
+              path: dest,
+              message:
+                `Bundle "${name}" is recorded in the lockfile but its "${sourcePath || "."}" ` +
+                `tree is missing from ${dest}.`,
+            });
+            continue;
+          }
+          const expected = entry.pathHashes[sourcePath];
+          if (!expected) continue;
+          const { contentHash } = await hashTree(dest);
+          if (contentHash !== expected) {
+            issues.push({
+              kind: "hash-mismatch",
+              primitive: "bundle",
+              name,
+              target: target.name,
+              path: dest,
+              expected,
+              actual: contentHash,
+              message:
+                `Installed files for bundle "${name}" in ${dest} no longer match the lockfile. ` +
+                `Something edited them in place; sync() will restore the pinned tree.`,
+            });
+          }
+        }
+      }
+    }
+
+    /**
+     * A settings fragment's proof is the owned slice of the settings file. The
+     * lockfile stores the keys we own and a hash over their values, so an edited
+     * command or a deleted key is detectable without the file's other contents,
+     * which belong to the user, entering the comparison at all.
+     */
+    for (const target of targets) {
+      const targetEntry = lock.targets[target.name];
+      const path = targetEntry?.settingsPath;
+      if (!path) continue;
+      const document = parseSettingsDocument(await readTextFile(path).catch(() => undefined));
+      for (const [name, owned] of Object.entries(targetEntry.settings)) {
+        if (!lock.settings[name]) continue;
+        checked += 1;
+        if (document === undefined) {
+          issues.push({
+            kind: "missing",
+            primitive: "settings",
+            name,
+            target: target.name,
+            path,
+            message:
+              `Settings fragment "${name}" is recorded in the lockfile but ${path} is missing ` +
+              `or unreadable.`,
+          });
+          continue;
+        }
+        const actual = settingsProjectionHash(document, owned);
+        if (owned.hash && actual !== owned.hash) {
+          issues.push({
+            kind: "settings-drift",
+            primitive: "settings",
+            name,
+            target: target.name,
+            path,
+            expected: owned.hash,
+            actual,
+            message:
+              `The keys agent-outfitter manages for "${name}" in ${path} were edited or removed. ` +
+              `sync() will restore them; anything else in the file is left alone.`,
           });
         }
       }
@@ -1307,6 +1881,52 @@ const installedInstructionEntry = (
   contentHash: instruction.contentHash,
 });
 
+const installedBundleEntry = (
+  bundle: ResolvedBundle,
+  target: string,
+  root: string,
+  paths: Record<string, string>,
+): InstalledPrimitive => ({
+  name: bundle.name,
+  kind: "bundle",
+  target,
+  path: root,
+  paths,
+  source: bundle.source,
+  ref: bundle.ref,
+  commit: bundle.commit,
+  contentHash: bundle.contentHash,
+});
+
+const installedSettingsEntry = (
+  fragment: ResolvedSettings,
+  target: string,
+  path: string,
+): InstalledPrimitive => ({
+  name: fragment.name,
+  kind: "settings",
+  target,
+  path,
+  source: fragment.source,
+  ref: fragment.ref,
+  commit: fragment.commit,
+  contentHash: fragment.contentHash,
+});
+
+/**
+ * Where a bundle's paths *would* land, without writing anything.
+ *
+ * Used by the dry run and the skip path, both of which must report destinations
+ * without calling the target's writer to learn them.
+ */
+const declaredBundlePaths = (
+  bundle: ResolvedBundle,
+  root: string,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(bundle.paths).map(([source, dest]) => [source, join(root, dest)]),
+  );
+
 const toLockSkill = (skill: ResolvedSkill): LockSkill => ({
   source: primitiveSourceToLockSource(skill.source),
   ref: skill.ref,
@@ -1323,6 +1943,32 @@ const toLockMcp = (server: ResolvedMcpServer): LockMcp => ({
   declaredBy: server.declaredBy,
   trusted: server.trusted,
   configHash: server.configHash,
+});
+
+const toLockBundle = (bundle: ResolvedBundle): LockBundle => ({
+  source: primitiveSourceToLockSource(bundle.source),
+  ref: bundle.ref,
+  commit: bundle.commit,
+  contentHash: bundle.contentHash,
+  paths: bundle.paths,
+  pathHashes: bundle.pathHashes,
+  files: bundle.files,
+  declaredBy: bundle.declaredBy,
+  trusted: bundle.trusted,
+});
+
+const toLockSettings = (fragment: ResolvedSettings): LockSettings => ({
+  source: primitiveSourceToLockSource(fragment.source),
+  ref: fragment.ref,
+  commit: fragment.commit,
+  subdir: fragment.subdir,
+  contentHash: fragment.contentHash,
+  // An inline fragment has no commit to be re-read from, so its content travels
+  // in the lockfile. That is what keeps sync() independent of the manifest.
+  ...(fragment.inline ? { content: JSON.stringify(fragment.settings) } : {}),
+  inline: fragment.inline,
+  declaredBy: fragment.declaredBy,
+  trusted: fragment.trusted,
 });
 
 const toLockInstruction = (instruction: ResolvedInstruction): LockInstruction => ({
@@ -1364,21 +2010,29 @@ const fromLockMcp = (name: string, entry: LockMcp): ResolvedMcpServer => {
  * A read-only stand-in for a target named in the lockfile but not configured on
  * this manager, so `list()`/`verify()` still work without target construction.
  */
-const stubTarget = (name: string, lock: Lockfile): AgentTarget => ({
-  name,
-  supports: [],
-  resolveDir: (kind) =>
-    (kind === "instruction"
-      ? lock.targets[name]?.instructionPath
-      : lock.targets[name]?.mcpConfigPath) ?? "",
-  materialize: () => {
+const stubTarget = (name: string, lock: Lockfile): AgentTarget => {
+  const unwritable = (): never => {
     throw new TargetError(
       `Target "${name}" is recorded in the lockfile but is not configured on this manager, ` +
         `so it cannot be written to. Pass it via "targets".`,
       { name },
     );
-  },
-});
+  };
+  return {
+    name,
+    supports: [],
+    resolveDir: (kind) => {
+      const entry = lock.targets[name];
+      if (kind === "instruction") return entry?.instructionPath ?? "";
+      if (kind === "settings") return entry?.settingsPath ?? "";
+      if (kind === "mcp") return entry?.mcpConfigPath ?? "";
+      // A bundle's destinations were recorded absolute, so there is no root to
+      // reconstruct and nothing honest to answer with.
+      return "";
+    },
+    materialize: unwritable,
+  };
+};
 
 const toManifestEntry = (
   ref: PrimitiveRef,
@@ -1413,6 +2067,21 @@ const sameManifestSource = (
   const selB = isSourceEntry(b) ? b.select : undefined;
   return JSON.stringify(selA ?? null) === JSON.stringify(selB ?? null);
 };
+
+/**
+ * The name a settings entry resolves to: explicit, else the filename it points at.
+ *
+ * Kept beside the resolver's own derivation so the two cannot drift; `remove()`
+ * has to match on the same name `install()` recorded.
+ */
+const settingsEntryName = (entry: SettingsRefEntry): string =>
+  entry.name ??
+  ((entry.ref ?? "").split("#")[0] ?? "")
+    .split("/")
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.json$/i, "") ??
+  "";
 
 /** Whether a bare ref points at a single skill folder of this name. */
 const refTargetsSkill = (ref: string, name: string): boolean => {

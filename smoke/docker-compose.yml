@@ -1,9 +1,11 @@
-# One image, two harnesses.
+# One image, three runs.
 #
-# The same application code runs against both targets, differing only by
-# HARNESS, which is the property worth proving. If outfitting Codex and
-# outfitting Claude Code needed different wrapper code, the target abstraction
-# would not be earning its place.
+# The `codex` and `claude` services run the same application code against both
+# targets, differing only by HARNESS, which is the property worth proving: if
+# outfitting Codex and outfitting Claude Code needed different wrapper code, the
+# target abstraction would not be earning its place. The `aidlc` service is a
+# different claim, installing a whole committed harness rather than a handful of
+# skills, so it has its own entrypoint.
 #
 # Each service bind-mounts its own output directory, so everything the install
 # writes survives the container and can be inspected from the host. Only
@@ -53,3 +55,17 @@ services:
       HOST_OUTPUT_DIR: ./test-output/claude
     volumes:
       - ../test-output/claude:/workspace/out
+
+  # A whole committed harness rather than a handful of skills: bundles, settings,
+  # skills, and instructions together, from one pinned tag. Its own entrypoint,
+  # because what it asserts is a different shape of claim: not "did the paths
+  # resolve", but "did a framework arrive complete and leave the operator's own
+  # settings.json intact".
+  aidlc:
+    <<: *common
+    entrypoint: ["bun", "run", "/workspace/app/aidlc.ts"]
+    environment:
+      <<: *common-env
+      HOST_OUTPUT_DIR: ./test-output/aidlc
+    volumes:
+      - ../test-output/aidlc:/workspace/out
