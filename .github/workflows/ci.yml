@@ -55,8 +55,14 @@ jobs:
   # where the install actually wrote.
   #
   # A separate job rather than a step in `build`, so the fast checks are not held
-  # behind a Docker build, and one matrix entry per harness so the two run in
-  # parallel and a failure names which harness broke.
+  # behind a Docker build, and one matrix entry per run so they go in parallel and
+  # a failure names which one broke.
+  #
+  # `aidlc` is a different shape of claim from the other two: not "did the default
+  # paths resolve and does sdkOptions() point at them", but "did a whole committed
+  # harness arrive complete, and did it leave the operator's own settings.json
+  # intact". It needs no special casing here because it is a compose service with
+  # its own entrypoint.
   smoke:
     runs-on: ubuntu-latest
     # The token is passed only to lift the anonymous API rate limit while
@@ -64,11 +70,11 @@ jobs:
     permissions:
       contents: read
     strategy:
-      # Report both harnesses even when one fails: "Codex passed, Claude did not"
+      # Report every entry even when one fails: "Codex passed, Claude did not"
       # localizes the problem far faster than a single cancelled run.
       fail-fast: false
       matrix:
-        harness: [codex, claude]
+        harness: [codex, claude, aidlc]
     steps:
       - uses: actions/checkout@v4
 
@@ -109,7 +115,7 @@ jobs:
           path: test-output/${{ matrix.harness }}
           # Required, not optional: almost everything installed lives under
           # `.codex/` or `.claude/`, and this action excludes dotted paths by
-          # default, and without it the artifact would quietly contain only the
+          # default, so without it the artifact would quietly contain only the
           # lockfile.
           include-hidden-files: true
           if-no-files-found: error

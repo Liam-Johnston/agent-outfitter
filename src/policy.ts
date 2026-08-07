@@ -20,6 +20,16 @@ import type {
 export const DEFAULT_POLICY: ResolvedPolicy = {
   requireLockHashMatch: true,
   scripts: "warn",
+  /**
+   * Deny by default, unlike `scripts`.
+   *
+   * A skill's scripts run when the agent invokes that skill. An executable
+   * harness registers itself into lifecycle events that fire on every tool call,
+   * so its code runs whether or not anything asked for it. That is an opt-in, and
+   * defaulting it off breaks nothing that exists: no manifest declared a bundle
+   * before this axis existed.
+   */
+  executableHarness: "deny",
   scan: "warn",
   allowTransitiveMcp: false,
   allowTransitiveInstructions: false,

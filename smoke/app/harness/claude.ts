@@ -75,7 +75,15 @@ export const setupClaude = async (options: SetupOptions): Promise<ClaudeSetup> =
       // `#main` is resolved to a commit once, at install time, and that commit is
       // what the lockfile pins, so the branch moving later does not change what
       // `sync()` installs.
-      sources: [{ ref: "github:anthropics/skills#main", select: ["pdf", "xlsx", "mcp-builder"] }],
+      //
+      // Two shapes of ref, both useful. The first points at a repository that
+      // holds many skills and picks three by name. The second points straight at
+      // one skill's folder, which is what you need when a repository is a plugin
+      // with skills nested inside it rather than a directory of them.
+      sources: [
+        { ref: "github:anthropics/skills#main", select: ["pdf", "xlsx", "mcp-builder"] },
+        { ref: "github:EveryInc/compound-engineering-plugin/skills/ce-work#main" },
+      ],
 
       // Neither server carries a secret: `bearerEnv` and `envVars` name
       // environment variables. In `.mcp.json` they stay as `${NAME}` placeholders,
@@ -103,7 +111,7 @@ export const setupClaude = async (options: SetupOptions): Promise<ClaudeSetup> =
 
       policy: {
         allowedHosts: ["github.com"],
-        allowedOwners: ["anthropics"],
+        allowedOwners: ["anthropics", "EveryInc"],
         // These skills legitimately ship helper scripts, so warn rather than refuse.
         scripts: "warn",
         scan: "deny",

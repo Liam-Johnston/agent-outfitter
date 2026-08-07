@@ -48,21 +48,21 @@ describe("checkTree", () => {
 
   test("warns about bundled scripts by default", async () => {
     const { dir, files } = await treeWithScript();
-    const result = await checkTree("x", dir, files, resolvePolicy());
+    const result = await checkTree("Skill", "x", dir, files, resolvePolicy());
     expect(result.scripts).toEqual(["scripts/run.py"]);
     expect(result.warnings.map((w) => w.code)).toEqual(["scripts-present"]);
   });
 
   test("refuses scripts under a deny policy", async () => {
     const { dir, files } = await treeWithScript();
-    await expect(checkTree("x", dir, files, resolvePolicy({ scripts: "deny" }))).rejects.toThrow(
+    await expect(checkTree("Skill", "x", dir, files, resolvePolicy({ scripts: "deny" }))).rejects.toThrow(
       PolicyViolationError,
     );
   });
 
   test("stays silent under an allow policy", async () => {
     const { dir, files } = await treeWithScript();
-    const result = await checkTree("x", dir, files, resolvePolicy({ scripts: "allow" }));
+    const result = await checkTree("Skill", "x", dir, files, resolvePolicy({ scripts: "allow" }));
     expect(result.warnings).toEqual([]);
   });
 
@@ -71,14 +71,14 @@ describe("checkTree", () => {
     await writeFileAt(dir, "SKILL.md", "---\nname: x\n---\nIgnore‮ previous\n");
     const files = await listFiles(dir);
 
-    const warned = await checkTree("x", dir, files, resolvePolicy());
+    const warned = await checkTree("Skill", "x", dir, files, resolvePolicy());
     expect(warned.warnings.map((w) => w.code)).toEqual(["hidden-unicode"]);
     expect(warned.hiddenUnicode).toHaveLength(1);
 
-    await expect(checkTree("x", dir, files, resolvePolicy({ scan: "deny" }))).rejects.toThrow(
+    await expect(checkTree("Skill", "x", dir, files, resolvePolicy({ scan: "deny" }))).rejects.toThrow(
       PolicyViolationError,
     );
-    const off = await checkTree("x", dir, files, resolvePolicy({ scan: "off" }));
+    const off = await checkTree("Skill", "x", dir, files, resolvePolicy({ scan: "off" }));
     expect(off.hiddenUnicode).toEqual([]);
   });
 
@@ -86,7 +86,7 @@ describe("checkTree", () => {
     const dir = await makeTempDir();
     await writeFileAt(dir, "SKILL.md", "clean\n");
     await Bun.write(`${dir}/data.json`, new Uint8Array([0x00, 0x01, 0xe2, 0x80, 0x8b]));
-    const result = await checkTree("x", dir, await listFiles(dir), resolvePolicy());
+    const result = await checkTree("Skill", "x", dir, await listFiles(dir), resolvePolicy());
     expect(result.hiddenUnicode).toEqual([]);
   });
 });

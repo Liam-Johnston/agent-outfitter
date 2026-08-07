@@ -16,7 +16,7 @@ export SMOKE_GID := $(shell id -g)
 # `docker compose run --rm` already tears the container down on exit, including
 # on Ctrl-C, so there is no lingering state to trap for. `smoke-clean` exists for
 # the image and build cache, which do outlive a run.
-.PHONY: help install build test typecheck lint check smoke smoke-codex smoke-claude smoke-build smoke-output smoke-clean clean
+.PHONY: help install build test typecheck lint check smoke smoke-codex smoke-claude smoke-aidlc smoke-build smoke-output smoke-clean clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -63,7 +63,10 @@ smoke-codex: smoke-build $(OUT_DIR)/codex ## Smoke-test the Codex target in a fr
 smoke-claude: smoke-build $(OUT_DIR)/claude ## Smoke-test the Claude target in a fresh container
 	$(COMPOSE) run --rm claude
 
-smoke: smoke-codex smoke-claude ## Smoke-test both harnesses
+smoke-aidlc: smoke-build $(OUT_DIR)/aidlc ## Install a whole committed harness (AWS AI-DLC) in a fresh container
+	$(COMPOSE) run --rm aidlc
+
+smoke: smoke-codex smoke-claude smoke-aidlc ## Smoke-test every harness
 
 smoke-output: ## Show what the last smoke run left behind
 	@test -d $(OUT_DIR) || { echo "no $(OUT_DIR)/. Run 'make smoke' first"; exit 1; }

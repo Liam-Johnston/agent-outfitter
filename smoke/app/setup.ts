@@ -41,7 +41,7 @@ import { setupCodex } from "./harness/codex.ts";
  * Restated here rather than imported from them: an assertion that reads its
  * expected value out of the code under test cannot fail, it can only agree.
  */
-const SKILLS = ["pdf", "xlsx", "mcp-builder"] as const;
+const SKILLS = ["pdf", "xlsx", "mcp-builder", "ce-work"] as const;
 const MCP_SERVERS = ["filesystem", "github"] as const;
 
 // ---------------------------------------------------------------------------

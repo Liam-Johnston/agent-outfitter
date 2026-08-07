@@ -2,10 +2,10 @@
 
 [![npm](https://img.shields.io/npm/v/agent-outfitter.svg)](https://www.npmjs.com/package/agent-outfitter)
 
-Install agent skills, MCP servers, and instruction fragments from git into Claude Code, Codex,
-or any harness you write an adapter for. It is a TypeScript library, not a CLI: you import a
-function, `await` it, and get a typed result. Every primitive is pinned to an exact commit and
-a content hash in a lockfile.
+Install agent skills, MCP servers, instruction fragments, and whole committed harnesses from
+git into Claude Code, Codex, or any harness you write an adapter for. It is a TypeScript
+library, not a CLI: you import a function, `await` it, and get a typed result. Every primitive
+is pinned to an exact commit and a content hash in a lockfile.
 
 ```ts
 // Run from /workspace/project. claudeTarget() with no arguments installs into
@@ -201,6 +201,8 @@ Use British spelling. Prefer active voice.
 | `skill` | `SKILL.md` folder | `$CODEX_HOME/skills/<name>`, `.claude/skills/<name>` | supported |
 | `mcp` | manifest entry or frontmatter dependency | `config.toml` `[mcp_servers.*]`, `.mcp.json` | supported |
 | `instruction` | markdown fragment | marked region in `AGENTS.md` / `CLAUDE.md` | supported |
+| `bundle` | declared subtree | the paths the manifest declares, anywhere under the target root | supported |
+| `settings` | JSON fragment, or inline | ownership-tracked merge into `.claude/settings.json` | supported |
 | `plugin`, `agent`, `prompt`, `hook` | | | parsed and recorded, not installed |
 
 Deferred kinds surface in `resolution.unsupported` with a `not-implemented` warning instead of
@@ -220,8 +222,8 @@ const outfitter = createAgentManager(config?: AgentManagerConfig): AgentManager;
 | `add(ref, opts?)` | Record a ref in the manifest, then install it and its dependencies. |
 | `sync(opts?)` | Reinstall strictly from the lockfile. The CI entrypoint. |
 | `list(opts?)` | What is installed: lockfile entries confirmed against target state. |
-| `remove(name, opts?)` | Delete a skill or fragment from targets, lockfile, and manifest. |
-| `verify(opts?)` | Re-hash installed files and instruction regions against the lockfile. |
+| `remove(name, opts?)` | Delete a skill, fragment, bundle, or settings fragment from targets, lockfile, and manifest. |
+| `verify(opts?)` | Re-hash installed files, instruction regions, bundle trees, and owned settings keys against the lockfile. |
 
 ```ts
 // Diff before committing to anything. resolve() populates the cache and returns
@@ -236,6 +238,7 @@ await outfitter.install({ resolution: plan, dryRun: true });
 const { installed } = await outfitter.install();
 const skills = installed.filter((p) => p.kind === "skill");
 const fragments = installed.filter((p) => p.kind === "instruction");
+const engine = installed.find((p) => p.kind === "bundle");   // engine?.paths holds each destination
 
 // Add one skill and write it into the manifest.
 await outfitter.add("github:anthropics/skills/skills/docx");
@@ -312,11 +315,30 @@ export default defineConfig({
     "local:./instructions",
   ],
 
+  bundles: [
+    {
+      ref: "github:awslabs/aidlc-workflows/dist/claude#v2",
+      name: "aidlc-engine",
+      paths: {
+        ".claude/tools": ".claude/tools",       // <source subtree>: <destination>
+        ".claude/hooks": ".claude/hooks",
+        ".claude/knowledge": ".claude/knowledge",
+        aidlc: "aidlc",                         // may land outside .claude/
+      },
+    },
+  ],
+
+  settings: [
+    { ref: "github:awslabs/aidlc-workflows/dist/claude/.claude/settings.json#v2", name: "aidlc" },
+    { name: "local-overrides", settings: { env: { AWS_REGION: "eu-west-2" } } },
+  ],
+
   policy: {
     allowedHosts: ["github.com"],
     allowedOwners: ["acme", "anthropics"],
     requireLockHashMatch: true,
     scripts: "warn",                     // "allow" | "warn" | "deny"
+    executableHarness: "deny",           // bundles that install code: default "deny"
     scan: "warn",                        // hidden Unicode: "off" | "warn" | "deny"
     allowTransitiveMcp: false,
     allowTransitiveInstructions: false,
@@ -387,17 +409,152 @@ left with nothing but removed regions is deleted rather than left as litter.
 `verify()` re-hashes each region against the lockfile, so an edit inside a managed region is
 reported as `instruction-drift` and `sync()` restores the pinned text.
 
+## Whole harnesses
+
+A framework like [AWS AI-DLC](https://github.com/awslabs/aidlc-workflows) is mostly *not* skills.
+Of the tree it ships for Claude, 40 files are skills and the other ~230 are engine: `tools/` the
+skills shell into, `knowledge/` they read, `hooks/` that fire on every tool call, a stage
+protocol, and a `settings.json` wiring it together. Install only the skills and you get 40 skills
+that fail on first invocation, because every one of them runs
+`bun .claude/tools/aidlc-orchestrate.ts`.
+
+Two kinds close that gap.
+
+### `bundle`: a declared subtree
+
+A skill is *discovered*: agent-outfitter probes for `SKILL.md` folders, and the skill's own name
+decides where it lands. A bundle has no marker file and no frontmatter, which is exactly why it
+is needed, and it is why a bundle must be **declared** instead:
+
+```ts
+bundles: [
+  {
+    ref: "github:awslabs/aidlc-workflows/dist/claude#v2",
+    name: "aidlc-engine",                     // defaults to the repository name
+    paths: {
+      ".claude/tools": ".claude/tools",       // <source subtree>: <destination>
+      ".claude/knowledge": ".claude/knowledge",
+      aidlc: "aidlc",
+    },
+  },
+]
+```
+
+Each subtree is copied verbatim, atomically: staged beside its destination and renamed into
+place, so an agent scanning the directory never sees a half-written engine. Exec bits are
+re-derived afterwards, because tarball extraction drops file modes.
+
+The consequences of being declared rather than discovered are worth stating plainly. A bundle
+cannot be picked out by `select:` glob, cannot be a dependency edge, and cannot be pulled in by a
+skill's frontmatter: there is no transitive form of a bundle, deliberately, because a bundle
+writes to a path of its own choosing. Destinations must stay under the target root, so an
+absolute path, a `~`, or any `..` segment is refused when the manifest is validated rather than
+normalized into something safe-looking. Two bundles claiming one destination is an error, not a
+first-wins warning, since either way round one would silently replace the other.
+
+The lockfile records a hash per declared path as well as one over the whole bundle, so
+`verify()` names the directory that drifted rather than just the bundle.
+
+### `settings`: an ownership-tracked merge
+
+Instruction fragments get marker comments, so the file itself says which regions are managed.
+JSON has nowhere to put a marker, so ownership is recorded in the lockfile instead, key by key.
+That record is the whole mechanism: without it, removal could only clobber.
+
+```ts
+settings: [
+  { ref: "github:awslabs/aidlc-workflows/dist/claude/.claude/settings.json#v2", name: "aidlc" },
+  { name: "local-overrides", settings: { env: { AWS_REGION: "eu-west-2" } } },  // inline
+]
+```
+
+Four regions, three merge semantics:
+
+| Region | Semantics |
+|---|---|
+| `env.*` | key-level: one value per key |
+| `permissions.allow[]`, `deny[]`, `ask[]` | set union, tracked by exact string |
+| `hooks.<Event>[].hooks[]` | set union, tracked by event + matcher + command |
+| `model`, `statusLine`, `effortLevel`, … | whole-value, and **not** mergeable |
+
+A scalar cannot be merged. Two fragments both declaring `model` is a conflict, not something to
+reconcile, and so is one fragment declaring a key the user already set by hand. Both warn with
+`settings-conflict` and leave the file's own value alone, because guessing wrong there silently
+changes which model an agent runs.
+
+Hooks are the real work. Ownership is tracked at the innermost `{ type, command }` element, and a
+matcher group is pruned only when it empties *and* agent-outfitter created it — a group the user
+wrote may hold their own hooks beside ours. An entry whose `command` we cannot read is skipped
+rather than guessed at: an element whose identity cannot be recorded could never be removed again.
+
+The result is that a hand-written `settings.json` survives install, reinstall, and removal:
+
+```ts
+await outfitter.install();          // their keys untouched, ours added
+await outfitter.remove("aidlc");    // ours gone, their file byte-identical to what they wrote
+```
+
+`verify()` re-derives the owned slice of the file and hashes it, so an edited hook command or a
+changed `model` is reported as `settings-drift`, while anything the user does elsewhere in the
+file is correctly ignored.
+
+### The trust gate
+
+`bundle` and `settings` together can install executable code and register it into lifecycle
+events, which is a larger claim than any other kind makes. It gets its own policy axis, and it
+is **off by default**:
+
+```ts
+policy: { executableHarness: "deny" }   // the default. "warn" installs and reports; "allow" is silent.
+```
+
+Under `"deny"` the install fails before a byte is written, naming what it would have put in
+place:
+
+```
+PolicyViolationError: This install would put an executable agent harness in place:
+227 file(s), 54 of them executable (.claude/hooks/aidlc-audit-logger.ts, …);
+18 hook registration(s) across 8 event(s) (PostToolUse, PreToolUse, PreCompact, …);
+a statusLine command; 8 permissions.allow entries (Bash, Bash(...), Edit, Glob, …).
+Hooks run automatically on every matching tool call, and permissions.allow entries pre-approve
+tools without prompting, so policy.executableHarness defaults to "deny".
+```
+
+This is a separate axis from `scripts` rather than an extension of it, because the two describe
+different things. `scripts` is about files under a skill's `scripts/` folder, which run when a
+skill tells the agent to run them. An executable harness registers code that fires on every tool
+call whether or not anything asked for it, plus a status-line command, plus `permissions.allow`
+entries that pre-approve `Bash`. Consenting to the former implies nothing about the latter.
+
+Detection is extension-based (`.ts`, `.sh`, `.py`, `.ps1`, …) plus any file a hook or status-line
+command names, not a path prefix: a committed harness scatters its code by role, so
+`scriptFiles()`-style prefix matching would report an engine of 54 executables as script-free.
+
+### What is deliberately absent
+
+AI-DLC compiles a stage graph after install, and there is **no post-install hook for it**. "Skill
+code is never executed. Files are copied and text is merged, nothing more" is a large part of why
+this library is safe to point at a third-party repository, and it is not worth trading for a
+convenience the framework does not need: AI-DLC self-compiles through its own `PostToolUse` hook
+on first use. Install the files; let the harness compile itself.
+
+`make smoke-aidlc` installs the real thing in a fresh container and checks all of the above,
+including that an operator's own `settings.json` comes back byte-identical after `remove()`.
+
 ## Targets
 
 Each target declares which primitive kinds it supports, so anything it cannot take is reported
 rather than dropped in silence.
 
-| Target | Skills | MCP servers | Instructions |
-|---|---|---|---|
-| `codexTarget({ codexHome, scope, projectDir, mcpMode, instructionFile })` | `$CODEX_HOME/skills/<name>` or `<projectDir>/.agents/skills/<name>` | `config.toml` `[mcp_servers.*]` | `AGENTS.md` |
-| `claudeTarget({ dir, mode, scope, consumer, instructionFile })` | `<dir>/.claude/skills/<name>`, or a plugin bundle | `.mcp.json` `mcpServers` | `CLAUDE.md` |
-| `filesystemTarget({ dir, mcpFile, instructionFile })` | `<dir>/<name>` | `<dir>/mcp.json` | `<dir>/AGENTS.md` |
-| `openaiHostedTarget({ client \| upload })` | uploaded, returns `skillId` | not supported | not supported |
+| Target | Skills | MCP servers | Instructions | Bundles | Settings |
+|---|---|---|---|---|---|
+| `codexTarget({ codexHome, scope, projectDir, mcpMode, instructionFile })` | `$CODEX_HOME/skills/<name>` or `<projectDir>/.agents/skills/<name>` | `config.toml` `[mcp_servers.*]` | `AGENTS.md` | not supported | not supported |
+| `claudeTarget({ dir, mode, scope, consumer, instructionFile })` | `<dir>/.claude/skills/<name>`, or a plugin bundle | `.mcp.json` `mcpServers` | `CLAUDE.md` | declared paths under `<dir>` | `<dir>/.claude/settings.json` |
+| `filesystemTarget({ dir, mcpFile, instructionFile })` | `<dir>/<name>` | `<dir>/mcp.json` | `<dir>/AGENTS.md` | declared paths under `<dir>` | not supported |
+| `openaiHostedTarget({ client \| upload })` | uploaded, returns `skillId` | not supported | not supported | not supported | not supported |
+
+`settings` is Claude-specific on purpose: `.claude/settings.json` is one harness's schema, not a
+general shape, so a generic target reports it as unwritable rather than inventing a location.
 
 Called with no arguments, `codexTarget()` uses `$CODEX_HOME` then `~/.codex`, and
 `claudeTarget()` uses the manager root. Install to several at once and each gets its own
@@ -557,15 +714,56 @@ which entries and regions agent-outfitter owns in each target. Real output, trim
                      "subdir": "house-style.md", "declaredBy": "manifest", "trusted": true,
                      "contentHash": "sha256-5f0974d3d720822b337a769a29591c6e4191635f7600caa481505d0689c57dc2" }
   },
+  "bundles": {
+    "aidlc-engine": {
+      "source": { "type": "git", "provider": "github",
+                  "url": "https://github.com/awslabs/aidlc-workflows.git",
+                  "subdir": "dist/claude", "ref": "v2" },
+      "commit": "6c1e0a0b0f7b4d2a91c3e5d7f8a1b2c3d4e5f607",
+      "contentHash": "sha256-1f9c…",
+      "paths": { ".claude/tools": ".claude/tools", "aidlc": "aidlc" },
+      // One hash per declared path, so verify() names the tree that drifted.
+      "pathHashes": { ".claude/tools": "sha256-4ab1…", "aidlc": "sha256-77de…" },
+      "files": [".claude/tools/aidlc-orchestrate.ts", "aidlc/active-space"],
+      "declaredBy": "manifest", "trusted": true
+    }
+  },
+  "settings": {
+    "aidlc": { "source": { "type": "git", "provider": "github",
+                           "url": "https://github.com/awslabs/aidlc-workflows.git",
+                           "subdir": "dist/claude/.claude/settings.json", "ref": "v2" },
+               "commit": "6c1e0a0b0f7b4d2a91c3e5d7f8a1b2c3d4e5f607",
+               "subdir": "dist/claude/.claude/settings.json",
+               "contentHash": "sha256-b0d2…", "inline": false,
+               "declaredBy": "manifest", "trusted": true }
+  },
   "targets": {
     "claude": {
       "skills": { "pdf": "/workspace/project/.claude/skills/pdf" },
       "mcp": ["github"], "mcpConfigPath": "/workspace/project/.mcp.json",
-      "instructions": ["house-style"], "instructionPath": "/workspace/project/CLAUDE.md"
+      "instructions": ["house-style"], "instructionPath": "/workspace/project/CLAUDE.md",
+      "bundles": { "aidlc-engine": { ".claude/tools": "/workspace/project/.claude/tools",
+                                     "aidlc": "/workspace/project/aidlc" } },
+      // Exactly which keys in settings.json are agent-outfitter's, per fragment.
+      // This is what makes removal surgical rather than a clobber.
+      "settings": {
+        "aidlc": {
+          "env": ["AWS_REGION", "CLAUDE_CODE_USE_BEDROCK"],
+          "permissions": { "allow": ["Bash", "Edit", "Glob", "Read"] },
+          "hooks": ["PostToolUse Write|Edit bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/aidlc-x.ts\""],
+          "hookGroups": ["PostToolUse Write|Edit"],
+          "scalars": ["companyAnnouncements", "effortLevel", "model", "statusLine"],
+          "hash": "sha256-2c5f…"
+        }
+      },
+      "settingsPath": "/workspace/project/.claude/settings.json"
     }
   }
 }
 ```
+
+An inline settings fragment carries its own `content` in the lockfile, since there is no commit to
+re-read it from and `sync()` must not have to consult the manifest.
 
 A skill's `contentHash` is sha256 over a canonical serialization: every file, sorted by
 relative POSIX path, each length-delimited. File modes, timestamps, and directory entries are
@@ -576,6 +774,11 @@ output is fully key-sorted, so a lockfile committed from two machines diffs empt
 Commit resolution happens at resolve time through each host's REST API, falling back to git's
 smart-HTTP ref advertisement. That is why a moved tag is harmless: `sync()` installs the commit
 that was pinned.
+
+The lockfile stays at `version: 1`, and every schema level is strict. A current reader accepts an
+older lockfile, because the new sections default to empty, but an **older reader rejects a
+lockfile written by this version**. At 0.x that is the right trade against an upgrade-on-read
+path; upgrade in lockstep, or pin.
 
 ### CI
 
@@ -664,6 +867,15 @@ believes. Both are checked before they reach a target.
   with file, line, column, and code point, and instruction fragments are scanned too.
 - Script policy. `scripts: "allow" | "warn" | "deny"` controls whether skills bundling
   `scripts/` may install at all.
+- Executable-harness policy. `executableHarness` gates bundles that install executable files and
+  settings fragments that register hooks, a status line, or `permissions.allow` entries. It
+  **defaults to `"deny"`**, and the refusal names the files, hook registrations, events, and
+  pre-approvals it would have put in place. See [the trust gate](#the-trust-gate).
+- Bundle destinations are contained. Declared paths must stay under the target root; absolute
+  paths, `~`, and `..` segments are refused at manifest validation, not normalized.
+- No source-declared harnesses. Bundles and settings can only be declared by the consumer's
+  manifest. A fetched repository cannot nominate its own bundle or add a settings fragment,
+  because either would let it register code into the harness it was installed into.
 - Trust gating. Nothing a dependency introduces reaches a target without the operator opting
   in.
 - No implicit execution. agent-outfitter places files and merges text. The agent runtime
@@ -693,12 +905,13 @@ createAgentManager({
 
 The full set: `resolve:start`, `source:listed`, `source:retry`, `resolve:done`,
 `skill:fetched`, `skill:verified`, `skill:materialized`, `skill:skipped`, `skill:removed`,
-`mcp:configured`, `instruction:written`, `instruction:removed`, `lockfile:written`,
-`install:done`, `warning`.
+`mcp:configured`, `instruction:written`, `instruction:removed`, `bundle:fetched`,
+`bundle:materialized`, `bundle:skipped`, `bundle:removed`, `settings:written`,
+`settings:removed`, `lockfile:written`, `install:done`, `warning`.
 
 Warning codes: `duplicate-skill`, `scripts-present`, `hidden-unicode`, `transitive-mcp-dropped`,
-`transitive-instruction-dropped`, `mcp-conflict`, `instruction-conflict`, `not-implemented`,
-`target-config`, `manifest`, `source`.
+`transitive-instruction-dropped`, `mcp-conflict`, `instruction-conflict`, `settings-conflict`,
+`executable-harness`, `not-implemented`, `target-config`, `manifest`, `source`.
 
 ## Errors
 

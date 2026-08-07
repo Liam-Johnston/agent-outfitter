@@ -57,6 +57,38 @@ export const hashTree = async (
   return { contentHash: HASH_PREFIX + hash.digest("hex"), files: relPaths };
 };
 
+/**
+ * Hash several directory subtrees as one logical tree.
+ *
+ * Each part contributes its files under `prefix`, and the combined list is sorted
+ * globally before hashing, so the result is identical to `hashTree` over a single
+ * root that happens to contain those same subtrees. That equivalence is what lets
+ * a bundle's hash be computed from its staged source and then re-checked against
+ * destinations scattered across a project.
+ */
+export const hashSubtrees = async (
+  parts: readonly { root: string; prefix: string }[],
+): Promise<{ contentHash: string; files: string[] }> => {
+  const entries: { rel: string; abs: string }[] = [];
+  for (const part of parts) {
+    for (const rel of await listFiles(part.root)) {
+      entries.push({
+        rel: part.prefix ? `${part.prefix}/${rel}` : rel,
+        abs: join(part.root, ...rel.split(posix.sep)),
+      });
+    }
+  }
+  entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+
+  const hash = createHash("sha256");
+  for (const entry of entries) {
+    const bytes = await readFile(entry.abs);
+    hash.update(encoder.encode(`${entry.rel}\0${bytes.byteLength}\0`));
+    hash.update(bytes);
+  }
+  return { contentHash: HASH_PREFIX + hash.digest("hex"), files: entries.map((e) => e.rel) };
+};
+
 /** Constant-time-ish equality for hash strings (they are not secrets, but be tidy). */
 export const hashesEqual = (a: string | undefined, b: string | undefined): boolean =>
   typeof a === "string" && typeof b === "string" && a === b;
