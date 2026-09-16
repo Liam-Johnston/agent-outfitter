@@ -48,8 +48,18 @@ export interface AidlcSetup {
   install: InstallResult;
 }
 
-/** The tag everything is pinned to. A tag is resolved to a commit once, at install. */
-const REF = "v2";
+/**
+ * The tag everything is pinned to. A tag is resolved to a commit once, at install.
+ *
+ * An exact release, not the floating `v2` this used to follow. Upstream deleted
+ * that tag and then restructured: from `v2.8.0` there is no `dist/` at all, and
+ * the harness lives under `harness/` and `plugins/` in a shape this file knows
+ * nothing about. A moving pin turned an unrelated PR red for a reason that had
+ * nothing to do with it, which is the opposite of what a smoke test is for. What
+ * this test proves is that a real third-party committed harness installs, and
+ * `v2.7.0` is the last release that publishes the tree it was written against.
+ */
+const REF = "v2.7.0";
 
 /**
  * The published Claude harness inside the repository.

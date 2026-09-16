@@ -7,12 +7,20 @@
  * git server speaks over plain HTTP). Trees arrive as tarballs via `giget`.
  */
 
+import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { downloadTemplate, type TemplateInfo, type TemplateProvider } from "giget";
 
 import { AuthError, SourceResolutionError } from "./errors.js";
-import { ensureDir, listFiles, pathExists, removeDir, writeFileAtomic } from "./fsutil.js";
+import {
+  ensureDir,
+  listFiles,
+  pathExists,
+  removeDir,
+  removeFile,
+  writeFileAtomic,
+} from "./fsutil.js";
 import { describeSource, normalizeGitUrl, providerForSource, sourceRepoPath } from "./refs.js";
 import type { PrimitiveSource } from "./types.js";
 
@@ -31,6 +39,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 250;
+
+/**
+ * The name giget knows this resolver by. It appears twice, in the input string
+ * and in the `providers` map, and a third time in the cache path giget derives
+ * from it, so it is named once here rather than spelled out at each site.
+ */
+const GIGET_PROVIDER = "outfitter";
 
 export interface FetchContext {
   cacheDir: string;
@@ -403,11 +418,65 @@ export const repoCachePath = (
 const cacheSentinelPath = (dest: string): string => `${dest}.complete`;
 
 /**
+ * Where giget caches the tarball it downloads, mirroring its own layout.
+ *
+ * Reached only to *delete* an archive that failed to decode, and only on a best
+ * effort: if giget ever moves this path the unlink quietly misses, which costs
+ * the self-heal below and nothing else.
+ */
+const gigetTarballPath = (info: TemplateInfo): string => {
+  const cache =
+    platform() === "win32"
+      ? join(tmpdir(), "giget")
+      : process.env.XDG_CACHE_HOME
+        ? join(process.env.XDG_CACHE_HOME, "giget")
+        : join(homedir(), ".cache", "giget");
+  // giget re-sanitizes the template name with the same rule `info.name` is
+  // built with, so applying it again here is a no-op that keeps the two in step.
+  const name = (info.name ?? "template").replace(/[^\da-z-]/gi, "-");
+  return join(cache, GIGET_PROVIDER, name, `${info.version || name}.tar.gz`);
+};
+
+/**
+ * A tarball that arrived but would not decode.
+ *
+ * Different in kind from a transport failure: the bytes are present and wrong,
+ * so the only retry worth making is one that throws them away first. Runtimes
+ * word this differently (Bun reports `zlib: too many length or distance
+ * symbols`, Node `incorrect header check` or `unexpected end of file`), so the
+ * match is on the vocabulary they share rather than on one runtime's phrasing.
+ */
+const isDecodeError = (error: unknown): boolean =>
+  /zlib|gzip|inflate|incorrect header check|unexpected end of|invalid tar|checksum/i.test(
+    (error as { message?: string } | undefined)?.message ?? "",
+  );
+
+/**
+ * Trees being fetched right now, keyed by destination.
+ *
+ * Deliberately module-level: the key already carries the cache directory, the
+ * host, the repo and the commit, so two managers only meet here when they are
+ * asking for the identical tree. A token is not part of the key, and does not
+ * need to be: everything sharing a destination is the same process resolving
+ * one manifest, not a privilege boundary.
+ */
+const inFlight = new Map<string, Promise<string>>();
+
+/**
  * Fetch a repo tree at `commit` into the cache and return its root.
  *
  * The cache is content-addressed by commit, so a hit needs no revalidation. A
  * partially extracted tree left by an interrupted run has no sentinel and is
  * discarded rather than reused.
+ *
+ * **Concurrent callers asking for the same tree share one fetch**, and that is
+ * a correctness property rather than an optimization. A manifest selecting
+ * three skills from one repo is three entries in the lockfile, and `sync()`
+ * resolves them through `mapLimit`, which runs them at once. Each one computes
+ * the same
+ * destination *and*, one layer down, the same giget tarball path, so without
+ * the join below they download onto a single file simultaneously and what comes
+ * out is interleaved bytes of the right length that fail to decode.
  */
 export const fetchRepoTree = async (
   source: PrimitiveSource,
@@ -428,6 +497,32 @@ export const fetchRepoTree = async (
 
   if (ctx.useCache !== false && (await pathExists(sentinel))) return dest;
 
+  // A fetch already running for this destination is a live download of exactly
+  // these bytes, so `useCache: false` joins it rather than starting a second:
+  // what that option asks for is a tree not read from the cache, which is what
+  // the in-flight one is.
+  const joined = inFlight.get(dest);
+  if (joined) return joined;
+
+  const fetching = materializeRepoTree(source, commit, ctx, dest, sentinel);
+  inFlight.set(dest, fetching);
+  try {
+    return await fetching;
+  } finally {
+    // Only the caller that started it clears it. Callers that joined hold the
+    // promise itself and are unaffected by the entry going away.
+    inFlight.delete(dest);
+  }
+};
+
+/** Download, extract, and mark the tree complete. One caller at a time, by `fetchRepoTree`. */
+const materializeRepoTree = async (
+  source: PrimitiveSource & { type: "git" },
+  commit: string,
+  ctx: FetchContext,
+  dest: string,
+  sentinel: string,
+): Promise<string> => {
   const info: TemplateInfo = {
     name: `${new URL(normalizeGitUrl(source.url)).hostname}-${sourceRepoPath(source) ?? "repo"}`
       .replace(/[^\da-z-]/gi, "-")
@@ -453,8 +548,8 @@ export const fetchRepoTree = async (
   const download = async (): Promise<void> => {
     await removeDir(dest);
     await ensureDir(dest);
-    await downloadTemplate("outfitter:tree", {
-      providers: { outfitter: provider },
+    await downloadTemplate(`${GIGET_PROVIDER}:tree`, {
+      providers: { [GIGET_PROVIDER]: provider },
       registry: false,
       dir: dest,
       force: true,
@@ -473,8 +568,27 @@ export const fetchRepoTree = async (
       // giget surfaces HTTP failures as text, so the status has to be read back
       // out of the message to decide whether another attempt is worthwhile.
       const status = /\b(4\d{2}|5\d{2})\b/.exec(message)?.[1];
+
+      /**
+       * An archive that will not decode earns another attempt, but only once
+       * the bytes are gone. giget keeps every download in a cache of its own and
+       * reuses it whenever the recorded etag still matches, so a retry that
+       * leaves the file in place reads the same corruption and fails the same
+       * way, which is how a single bad download becomes a permanently wedged
+       * cache directory.
+       */
+      const corrupt = isDecodeError(error);
+      if (corrupt) {
+        const tarball = gigetTarballPath(info);
+        await removeFile(tarball);
+        await removeFile(`${tarball}.json`);
+      }
+
       const retryable =
-        n < budget && (isRetryableError(error) || (status ? isRetryableStatus(Number(status)) : false));
+        n < budget &&
+        (corrupt ||
+          isRetryableError(error) ||
+          (status ? isRetryableStatus(Number(status)) : false));
 
       if (retryable) {
         const delayMs = backoffMs(n);
